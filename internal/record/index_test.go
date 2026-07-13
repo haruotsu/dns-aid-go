@@ -2,6 +2,7 @@ package record
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -114,6 +115,69 @@ func TestParseIndexTXT(t *testing.T) {
 				{Name: "billing", Protocol: "a2a"},
 			},
 		},
+		{
+			name:    "vertical tab inside name",
+			txts:    []string{"agents=cha\vt:mcp"},
+			wantErr: true,
+		},
+		{
+			name:    "non-breaking space inside name",
+			txts:    []string{"agents=cha\u00a0t:mcp"},
+			wantErr: true,
+		},
+		{
+			name:    "control character inside name",
+			txts:    []string{"agents=cha\x01t:mcp"},
+			wantErr: true,
+		},
+		{
+			name:    "dot inside name",
+			txts:    []string{"agents=chat.example:mcp"},
+			wantErr: true,
+		},
+		{
+			name:    "name longer than 63 octets",
+			txts:    []string{"agents=" + strings.Repeat("a", 64) + ":mcp"},
+			wantErr: true,
+		},
+		{
+			name:    "name with leading hyphen",
+			txts:    []string{"agents=-chat:mcp"},
+			wantErr: true,
+		},
+		{
+			name:    "name with trailing hyphen",
+			txts:    []string{"agents=chat-:mcp"},
+			wantErr: true,
+		},
+		{
+			name:    "non-ASCII name",
+			txts:    []string{"agents=chät:mcp"},
+			wantErr: true,
+		},
+		{
+			name:    "protocol with invalid character",
+			txts:    []string{"agents=chat:m_cp"},
+			wantErr: true,
+		},
+		{
+			name:    "protocol with leading plus",
+			txts:    []string{"agents=chat:+mcp"},
+			wantErr: true,
+		},
+		{
+			name: "name at 63 octets with inner hyphen",
+			txts: []string{"agents=" + strings.Repeat("a", 30) + "-" + strings.Repeat("b", 32) + ":mcp"},
+			want: []IndexEntry{{
+				Name:     strings.Repeat("a", 30) + "-" + strings.Repeat("b", 32),
+				Protocol: "mcp",
+			}},
+		},
+		{
+			name: "protocol with plus dot and hyphen",
+			txts: []string{"agents=chat:coap+tcp.v1-x"},
+			want: []IndexEntry{{Name: "chat", Protocol: "coap+tcp.v1-x"}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -191,6 +255,68 @@ func TestFormatIndexTXT(t *testing.T) {
 				{Name: "chat", Protocol: "a2a"},
 			},
 			wantErr: true,
+		},
+		{
+			// Regression for the round-trip break: "a\v" used to be
+			// formatted verbatim but re-parsed as "a".
+			name:    "name with vertical tab",
+			entries: []IndexEntry{{Name: "a\v", Protocol: "mcp"}},
+			wantErr: true,
+		},
+		{
+			name:    "name with non-breaking space",
+			entries: []IndexEntry{{Name: "cha\u00a0t", Protocol: "mcp"}},
+			wantErr: true,
+		},
+		{
+			name:    "name with control character",
+			entries: []IndexEntry{{Name: "cha\x01t", Protocol: "mcp"}},
+			wantErr: true,
+		},
+		{
+			name:    "name with dot",
+			entries: []IndexEntry{{Name: "chat.example", Protocol: "mcp"}},
+			wantErr: true,
+		},
+		{
+			name:    "name longer than 63 octets",
+			entries: []IndexEntry{{Name: strings.Repeat("a", 64), Protocol: "mcp"}},
+			wantErr: true,
+		},
+		{
+			name:    "name with leading hyphen",
+			entries: []IndexEntry{{Name: "-chat", Protocol: "mcp"}},
+			wantErr: true,
+		},
+		{
+			name:    "name with trailing hyphen",
+			entries: []IndexEntry{{Name: "chat-", Protocol: "mcp"}},
+			wantErr: true,
+		},
+		{
+			name:    "non-ASCII name",
+			entries: []IndexEntry{{Name: "chät", Protocol: "mcp"}},
+			wantErr: true,
+		},
+		{
+			name:    "protocol with invalid character",
+			entries: []IndexEntry{{Name: "chat", Protocol: "m_cp"}},
+			wantErr: true,
+		},
+		{
+			name:    "protocol with leading hyphen",
+			entries: []IndexEntry{{Name: "chat", Protocol: "-mcp"}},
+			wantErr: true,
+		},
+		{
+			name:    "name at 63 octets",
+			entries: []IndexEntry{{Name: strings.Repeat("a", 63), Protocol: "mcp"}},
+			want:    "agents=" + strings.Repeat("a", 63) + ":mcp",
+		},
+		{
+			name:    "protocol with plus dot and hyphen",
+			entries: []IndexEntry{{Name: "chat", Protocol: "coap+tcp.v1-x"}},
+			want:    "agents=chat:coap+tcp.v1-x",
 		},
 	}
 

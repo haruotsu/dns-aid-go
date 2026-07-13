@@ -90,18 +90,51 @@ func FormatIndexTXT(entries []IndexEntry) (string, error) {
 	return indexPrefix + strings.Join(pairs, ","), nil
 }
 
-// validateIndexField rejects values that would corrupt the "name:proto,..."
-// syntax: empty strings, the separators themselves, and whitespace.
+// maxLabelLen is the maximum length of a DNS label in octets (RFC 1035).
+const maxLabelLen = 63
+
+// validateIndexField validates one field of an index entry with a whitelist,
+// shared by the parse and format paths.
+//
+// Name must be an LDH DNS label (ASCII letters, digits, and hyphens; 1-63
+// octets; no leading or trailing hyphen) because it is prepended to the
+// domain as a DNS label. Protocol must be a token matching
+// [A-Za-z0-9][A-Za-z0-9+.-]* (e.g. "mcp", "a2a", "https").
+//
+// These rules are intentionally conservative and may be tuned against the
+// reference implementation during interop testing (PR-10).
 func validateIndexField(field, value string) error {
 	if value == "" {
 		return fmt.Errorf("index entry has empty %s", field)
 	}
-	if strings.ContainsAny(value, ",:") || strings.ContainsFunc(value, isSpace) {
-		return fmt.Errorf("index entry %s %q must not contain %q, %q, or whitespace", field, value, ",", ":")
+	switch field {
+	case "name":
+		if len(value) > maxLabelLen {
+			return fmt.Errorf("index entry name %q is longer than %d octets", value, maxLabelLen)
+		}
+		if value[0] == '-' || value[len(value)-1] == '-' {
+			return fmt.Errorf("index entry name %q must not start or end with a hyphen", value)
+		}
+		for i := 0; i < len(value); i++ {
+			if !isAlphaNum(value[i]) && value[i] != '-' {
+				return fmt.Errorf("index entry name %q is not an LDH DNS label (ASCII letters, digits, hyphens)", value)
+			}
+		}
+	case "protocol":
+		if !isAlphaNum(value[0]) {
+			return fmt.Errorf("index entry protocol %q must start with an ASCII letter or digit", value)
+		}
+		for i := 1; i < len(value); i++ {
+			c := value[i]
+			if !isAlphaNum(c) && c != '+' && c != '.' && c != '-' {
+				return fmt.Errorf("index entry protocol %q must match [A-Za-z0-9][A-Za-z0-9+.-]*", value)
+			}
+		}
 	}
 	return nil
 }
 
-func isSpace(r rune) bool {
-	return r == ' ' || r == '\t' || r == '\n' || r == '\r'
+// isAlphaNum reports whether c is an ASCII letter or digit.
+func isAlphaNum(c byte) bool {
+	return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9'
 }
