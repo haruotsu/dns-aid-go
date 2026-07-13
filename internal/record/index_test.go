@@ -223,6 +223,11 @@ func TestFormatIndexTXT(t *testing.T) {
 	longProto := strings.Repeat("p", 300)
 	longSingle := "agents=chat:" + longProto
 
+	// Exact splitting boundaries: "agents=chat:" is 12 octets, so protocols
+	// of 243 and 244 octets format to exactly 255 and 256 octets.
+	proto255 := strings.Repeat("p", 243)
+	proto256 := strings.Repeat("p", 244)
+
 	tests := []struct {
 		name    string
 		entries []IndexEntry
@@ -246,6 +251,16 @@ func TestFormatIndexTXT(t *testing.T) {
 			name:    "single entry longer than 255 octets splits at byte boundary",
 			entries: []IndexEntry{{Name: "chat", Protocol: longProto}},
 			want:    []string{longSingle[:255], longSingle[255:]},
+		},
+		{
+			name:    "value of exactly 255 octets stays a single chunk",
+			entries: []IndexEntry{{Name: "chat", Protocol: proto255}},
+			want:    []string{"agents=chat:" + proto255},
+		},
+		{
+			name:    "value of 256 octets splits into 255 and 1",
+			entries: []IndexEntry{{Name: "chat", Protocol: proto256}},
+			want:    []string{("agents=chat:" + proto256)[:255], ("agents=chat:" + proto256)[255:]},
 		},
 		{
 			name:    "empty name",
