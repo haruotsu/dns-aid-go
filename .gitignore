@@ -34,3 +34,4 @@ go.work.sum
 docs/internal/
 
 .claude
+.review-fix-loop/
