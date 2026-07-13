@@ -278,6 +278,15 @@ func TestFormatSVCBParams(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "unknown value longer than 65535 octets",
+			params: SVCBParams{
+				Unknown: []SVCBUnknownParam{
+					{Key: 65406, Data: bytes.Repeat([]byte("u"), 65536)},
+				},
+			},
+			wantErr: true,
+		},
+		{
 			name:    "value of exactly 65535 octets",
 			params:  SVCBParams{Realm: strings.Repeat("r", 65535)},
 			want:    []dns.SVCBKeyValue{local(65404, strings.Repeat("r", 65535))},

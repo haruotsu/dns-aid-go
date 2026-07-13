@@ -55,7 +55,7 @@ type SVCBUnknownParam struct {
 	Data []byte
 }
 
-// paramField binds one draft key to its logical name and SVCBParams field.
+// paramFields binds each draft key to its logical name and SVCBParams field.
 // The order of this table is the canonical output order of FormatSVCBParams.
 var paramFields = []struct {
 	key   dns.SVCBKey
