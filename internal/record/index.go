@@ -1,0 +1,107 @@
+// Package record implements pure encode/decode functions for the DNS records
+// defined by draft-mozleywilliams-dnsop-dnsaid: the domain index TXT record
+// and the SVCB custom parameters. It performs no I/O.
+package record
+
+import (
+	"fmt"
+	"strings"
+)
+
+// indexPrefix is the key/value prefix of the domain index TXT record,
+// e.g. "agents=chat:mcp,billing:a2a".
+const indexPrefix = "agents="
+
+// IndexEntry is one agent entry in the domain index TXT record.
+type IndexEntry struct {
+	// Name is the agent name, the DNS label prefixed to the domain
+	// (e.g. "chat" for chat.example.com).
+	Name string
+	// Protocol is the agent protocol identifier (e.g. "mcp", "a2a").
+	Protocol string
+}
+
+// ParseIndexTXT parses the domain index TXT record value
+// ("agents=name:proto,...") into index entries.
+//
+// Multiple arguments are concatenated before parsing, matching how a DNS TXT
+// record consisting of multiple character-strings is interpreted (RFC 1035).
+func ParseIndexTXT(txts ...string) ([]IndexEntry, error) {
+	txt := strings.TrimSpace(strings.Join(txts, ""))
+	if txt == "" {
+		return nil, fmt.Errorf("empty index TXT record")
+	}
+
+	value, ok := strings.CutPrefix(txt, indexPrefix)
+	if !ok {
+		return nil, fmt.Errorf("index TXT record does not start with %q: %q", indexPrefix, txt)
+	}
+
+	var entries []IndexEntry
+	seen := make(map[string]bool)
+	for _, pair := range strings.Split(value, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			// Tolerate empty segments such as a trailing comma.
+			continue
+		}
+
+		name, proto, ok := strings.Cut(pair, ":")
+		if !ok {
+			return nil, fmt.Errorf("malformed index entry %q: want name:proto", pair)
+		}
+		name = strings.TrimSpace(name)
+		proto = strings.TrimSpace(proto)
+		if err := validateIndexField("name", name); err != nil {
+			return nil, fmt.Errorf("malformed index entry %q: %w", pair, err)
+		}
+		if err := validateIndexField("protocol", proto); err != nil {
+			return nil, fmt.Errorf("malformed index entry %q: %w", pair, err)
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("duplicate agent name %q in index", name)
+		}
+		seen[name] = true
+
+		entries = append(entries, IndexEntry{Name: name, Protocol: proto})
+	}
+	return entries, nil
+}
+
+// FormatIndexTXT formats index entries into the domain index TXT record value
+// ("agents=name:proto,..."). The output round-trips through ParseIndexTXT.
+func FormatIndexTXT(entries []IndexEntry) (string, error) {
+	seen := make(map[string]bool)
+	pairs := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if err := validateIndexField("name", e.Name); err != nil {
+			return "", err
+		}
+		if err := validateIndexField("protocol", e.Protocol); err != nil {
+			return "", err
+		}
+		if seen[e.Name] {
+			return "", fmt.Errorf("duplicate agent name %q in index", e.Name)
+		}
+		seen[e.Name] = true
+
+		pairs = append(pairs, e.Name+":"+e.Protocol)
+	}
+	return indexPrefix + strings.Join(pairs, ","), nil
+}
+
+// validateIndexField rejects values that would corrupt the "name:proto,..."
+// syntax: empty strings, the separators themselves, and whitespace.
+func validateIndexField(field, value string) error {
+	if value == "" {
+		return fmt.Errorf("index entry has empty %s", field)
+	}
+	if strings.ContainsAny(value, ",:") || strings.ContainsFunc(value, isSpace) {
+		return fmt.Errorf("index entry %s %q must not contain %q, %q, or whitespace", field, value, ",", ":")
+	}
+	return nil
+}
+
+func isSpace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r'
+}
