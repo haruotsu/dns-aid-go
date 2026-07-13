@@ -13,6 +13,9 @@ jobs:
       # release PR.
       contents: write
       pull-requests: write
+      # tagpr reads/writes merged PRs and their labels (tagpr:minor/major,
+      # changelog) through the Issues API, which requires the issues scope.
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - id: tagpr
