@@ -21,6 +21,7 @@ $TTL 300
 _index._agents TXT "agents=chat:mcp,billing:a2a"
 chat           SVCB 1 chat.example.com. alpn="mcp" port=443 key65400="https://example.com/cap.json"
 chat           TXT  "capabilities=chat,assistant" "version=1.2.0"
+txtless        SVCB 1 chat.example.com. port=443
 `
 
 func newTestClient(t *testing.T, opts ...resolvertest.Option) *resolver.Client {
@@ -83,6 +84,20 @@ func TestClientLookupTXTNXDomain(t *testing.T) {
 }
 
 func TestClientLookupTXTNoData(t *testing.T) {
+	c := newTestClient(t)
+
+	// txtless exists with an SVCB record only; the TXT query for it is a
+	// NOERROR response with an empty answer (NODATA), not NXDOMAIN.
+	_, err := c.LookupTXT(context.Background(), "txtless.example.com")
+	if !errors.Is(err, resolver.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "NXDOMAIN") {
+		t.Errorf("err = %v, want the NODATA path, not NXDOMAIN", err)
+	}
+}
+
+func TestClientQuerySVCBNoData(t *testing.T) {
 	c := newTestClient(t)
 
 	// _index._agents exists but has no SVCB; the SVCB query for it is NODATA.
@@ -196,6 +211,64 @@ func TestClientTimeout(t *testing.T) {
 	}
 }
 
+// truncatingBlackholeServer answers UDP queries with TC=1 after delay and
+// accepts TCP connections without ever answering, so a client that retries
+// over TCP only returns when its own timeout fires.
+func truncatingBlackholeServer(t *testing.T, delay time.Duration) string {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket: %v", err)
+	}
+	addr := pc.LocalAddr().String()
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	srv := &dns.Server{
+		PacketConn: pc,
+		Handler: dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+			time.Sleep(delay)
+			m := new(dns.Msg)
+			m.SetReply(req)
+			m.Truncated = true
+			w.WriteMsg(m) //nolint:errcheck // nothing to do on a failed reply in tests
+		}),
+	}
+	go srv.ActivateAndServe()            //nolint:errcheck // serve loop ends on Shutdown
+	t.Cleanup(func() { srv.Shutdown() }) //nolint:errcheck
+	return addr
+}
+
+func TestClientTimeoutBoundsTCPRetry(t *testing.T) {
+	// Timeout must bound the whole query, so time spent on the UDP leg has
+	// to count against the TCP retry rather than granting it a fresh budget.
+	const (
+		timeout  = 600 * time.Millisecond
+		udpDelay = 400 * time.Millisecond
+	)
+	c, err := resolver.NewClient(resolver.Config{
+		Server:  truncatingBlackholeServer(t, udpDelay),
+		Timeout: timeout,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	start := time.Now()
+	_, err = c.LookupTXT(context.Background(), "example.com")
+	if err == nil {
+		t.Fatal("LookupTXT succeeded, want timeout error")
+	}
+	// A per-leg timeout would take udpDelay+timeout in total; a shared
+	// budget returns after ~timeout.
+	if elapsed, limit := time.Since(start), timeout+udpDelay/2; elapsed >= limit {
+		t.Errorf("LookupTXT took %v, want < %v (one Timeout for UDP and TCP retry)", elapsed, limit)
+	}
+}
+
 func TestClientContextDeadline(t *testing.T) {
 	c, err := resolver.NewClient(resolver.Config{Server: blackholeServer(t)})
 	if err != nil {
@@ -242,7 +315,7 @@ func servfailServer(t *testing.T) string {
 			w.WriteMsg(m) //nolint:errcheck
 		}),
 	}
-	go srv.ActivateAndServe() //nolint:errcheck
+	go srv.ActivateAndServe()            //nolint:errcheck
 	t.Cleanup(func() { srv.Shutdown() }) //nolint:errcheck
 	return pc.LocalAddr().String()
 }

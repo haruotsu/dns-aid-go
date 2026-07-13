@@ -16,8 +16,9 @@ const defaultTimeout = 5 * time.Second
 // ednsUDPSize is the maximum UDP response size advertised via EDNS0.
 const ednsUDPSize = 4096
 
-// resolvConfPath is the standard system resolver configuration.
-const resolvConfPath = "/etc/resolv.conf"
+// resolvConfPath is the standard system resolver configuration. It is a
+// variable so tests can point NewClient at a fixture file.
+var resolvConfPath = "/etc/resolv.conf"
 
 // Config configures a Client.
 type Config struct {
@@ -108,8 +109,13 @@ func (c *Client) QuerySVCB(ctx context.Context, fqdn string) (SVCBResponse, erro
 }
 
 // query sends one qtype question for fqdn and returns the validated
-// response message. It retries over TCP when the UDP response is truncated.
+// response message. It retries over TCP when the UDP response is truncated;
+// one deadline of c.timeout covers both exchanges.
 func (c *Client) query(ctx context.Context, fqdn string, qtype uint16) (*dns.Msg, error) {
+	// An earlier deadline on ctx wins (context.WithTimeout keeps it).
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(fqdn), qtype)
 	m.SetEdns0(ednsUDPSize, true) // DO=1: request DNSSEC validation info
