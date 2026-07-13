@@ -1,6 +1,7 @@
 package record
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -217,10 +218,15 @@ func TestParseIndexTXT(t *testing.T) {
 func TestFormatIndexTXT(t *testing.T) {
 	t.Parallel()
 
+	// A single entry whose formatted form exceeds 255 octets: protocols have
+	// no length bound, so splitting must work at arbitrary byte boundaries.
+	longProto := strings.Repeat("p", 300)
+	longSingle := "agents=chat:" + longProto
+
 	tests := []struct {
 		name    string
 		entries []IndexEntry
-		want    string
+		want    []string
 		wantErr bool
 	}{
 		{
@@ -229,12 +235,17 @@ func TestFormatIndexTXT(t *testing.T) {
 				{Name: "chat", Protocol: "mcp"},
 				{Name: "billing", Protocol: "a2a"},
 			},
-			want: "agents=chat:mcp,billing:a2a",
+			want: []string{"agents=chat:mcp,billing:a2a"},
 		},
 		{
 			name:    "no entries",
 			entries: nil,
-			want:    "agents=",
+			want:    []string{"agents="},
+		},
+		{
+			name:    "single entry longer than 255 octets splits at byte boundary",
+			entries: []IndexEntry{{Name: "chat", Protocol: longProto}},
+			want:    []string{longSingle[:255], longSingle[255:]},
 		},
 		{
 			name:    "empty name",
@@ -334,12 +345,12 @@ func TestFormatIndexTXT(t *testing.T) {
 		{
 			name:    "name at 63 octets",
 			entries: []IndexEntry{{Name: strings.Repeat("a", 63), Protocol: "mcp"}},
-			want:    "agents=" + strings.Repeat("a", 63) + ":mcp",
+			want:    []string{"agents=" + strings.Repeat("a", 63) + ":mcp"},
 		},
 		{
 			name:    "protocol with plus dot and hyphen",
 			entries: []IndexEntry{{Name: "chat", Protocol: "coap+tcp.v1-x"}},
-			want:    "agents=chat:coap+tcp.v1-x",
+			want:    []string{"agents=chat:coap+tcp.v1-x"},
 		},
 	}
 
@@ -357,10 +368,58 @@ func TestFormatIndexTXT(t *testing.T) {
 			if err != nil {
 				t.Fatalf("FormatIndexTXT(%v) returned unexpected error: %v", tt.entries, err)
 			}
-			if got != tt.want {
+			if !slices.Equal(got, tt.want) {
 				t.Errorf("FormatIndexTXT(%v) = %q, want %q", tt.entries, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestFormatIndexTXTSplitsLongValue checks that a formatted value longer than
+// 255 octets is split into multiple character-strings, each at most 255
+// octets, that concatenate back to the full value and round-trip through
+// ParseIndexTXT.
+func TestFormatIndexTXTSplitsLongValue(t *testing.T) {
+	t.Parallel()
+
+	// Build enough entries that the joined value clearly exceeds 255 octets.
+	var entries []IndexEntry
+	pairs := make([]string, 0, 12)
+	for i := 0; i < 12; i++ {
+		name := fmt.Sprintf("agent-%02d-%s", i, strings.Repeat("x", 30))
+		entries = append(entries, IndexEntry{Name: name, Protocol: "mcp"})
+		pairs = append(pairs, name+":mcp")
+	}
+	full := "agents=" + strings.Join(pairs, ",")
+	if len(full) <= 255 {
+		t.Fatalf("test setup: formatted value is %d octets, want > 255", len(full))
+	}
+
+	chunks, err := FormatIndexTXT(entries)
+	if err != nil {
+		t.Fatalf("FormatIndexTXT(%v) returned unexpected error: %v", entries, err)
+	}
+	if len(chunks) < 2 {
+		t.Fatalf("FormatIndexTXT returned %d chunk(s) for a %d-octet value, want >= 2", len(chunks), len(full))
+	}
+	for i, c := range chunks {
+		if len(c) == 0 {
+			t.Errorf("chunk %d is empty", i)
+		}
+		if len(c) > 255 {
+			t.Errorf("chunk %d is %d octets, want <= 255", i, len(c))
+		}
+	}
+	if got := strings.Join(chunks, ""); got != full {
+		t.Errorf("concatenated chunks = %q, want %q", got, full)
+	}
+
+	reparsed, err := ParseIndexTXT(chunks...)
+	if err != nil {
+		t.Fatalf("ParseIndexTXT(%q) returned unexpected error: %v", chunks, err)
+	}
+	if !slices.Equal(reparsed, entries) {
+		t.Errorf("round trip mismatch: got %v, want %v", reparsed, entries)
 	}
 }
 
@@ -383,19 +442,28 @@ func TestIndexTXTRoundTrip(t *testing.T) {
 			name:    "no entries",
 			entries: nil,
 		},
+		{
+			name: "entries formatting to more than 255 octets",
+			entries: []IndexEntry{
+				{Name: strings.Repeat("a", 63), Protocol: "mcp"},
+				{Name: strings.Repeat("b", 63), Protocol: "a2a"},
+				{Name: strings.Repeat("c", 63), Protocol: "https"},
+				{Name: strings.Repeat("d", 63), Protocol: "mcp"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			txt, err := FormatIndexTXT(tt.entries)
+			chunks, err := FormatIndexTXT(tt.entries)
 			if err != nil {
 				t.Fatalf("FormatIndexTXT(%v) returned unexpected error: %v", tt.entries, err)
 			}
-			got, err := ParseIndexTXT(txt)
+			got, err := ParseIndexTXT(chunks...)
 			if err != nil {
-				t.Fatalf("ParseIndexTXT(%q) returned unexpected error: %v", txt, err)
+				t.Fatalf("ParseIndexTXT(%q) returned unexpected error: %v", chunks, err)
 			}
 			if !slices.Equal(got, tt.entries) {
 				t.Errorf("round trip mismatch: got %v, want %v", got, tt.entries)
@@ -422,13 +490,18 @@ func FuzzParseIndexTXT(f *testing.F) {
 			return
 		}
 
-		formatted, err := FormatIndexTXT(entries)
+		chunks, err := FormatIndexTXT(entries)
 		if err != nil {
 			t.Fatalf("FormatIndexTXT(%v) failed on entries parsed from %q: %v", entries, txt, err)
 		}
-		reparsed, err := ParseIndexTXT(formatted)
+		for i, c := range chunks {
+			if len(c) > 255 {
+				t.Errorf("chunk %d of formatted output of %q is %d octets, want <= 255", i, txt, len(c))
+			}
+		}
+		reparsed, err := ParseIndexTXT(chunks...)
 		if err != nil {
-			t.Fatalf("ParseIndexTXT(%q) failed on formatted output of %q: %v", formatted, txt, err)
+			t.Fatalf("ParseIndexTXT(%q) failed on formatted output of %q: %v", chunks, txt, err)
 		}
 		if !slices.Equal(reparsed, entries) {
 			t.Errorf("round trip mismatch for %q: got %v, want %v", txt, reparsed, entries)

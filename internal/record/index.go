@@ -72,29 +72,47 @@ func ParseIndexTXT(txts ...string) ([]IndexEntry, error) {
 }
 
 // FormatIndexTXT formats index entries into the domain index TXT record value
-// ("agents=name:proto,..."). The output round-trips through ParseIndexTXT.
-func FormatIndexTXT(entries []IndexEntry) (string, error) {
+// ("agents=name:proto,...") and returns it split into character-strings of at
+// most 255 octets each, as required for a DNS TXT record (RFC 1035).
+//
+// The value is split at plain byte boundaries every 255 octets. This is
+// always valid because TXT character-strings are concatenated verbatim when
+// read back, and it avoids edge cases: an agent protocol has no length bound,
+// so even a single entry may exceed 255 octets. The output round-trips
+// through ParseIndexTXT(chunks...).
+func FormatIndexTXT(entries []IndexEntry) ([]string, error) {
 	seen := make(map[string]bool)
 	pairs := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if err := validateIndexField("name", e.Name); err != nil {
-			return "", err
+			return nil, err
 		}
 		if err := validateIndexField("protocol", e.Protocol); err != nil {
-			return "", err
+			return nil, err
 		}
 		// DNS name comparison is case-insensitive (RFC 4343), so detect
 		// duplicates on the lowercased name while preserving input case.
 		key := strings.ToLower(e.Name)
 		if seen[key] {
-			return "", fmt.Errorf("duplicate agent name %q in index", e.Name)
+			return nil, fmt.Errorf("duplicate agent name %q in index", e.Name)
 		}
 		seen[key] = true
 
 		pairs = append(pairs, e.Name+":"+e.Protocol)
 	}
-	return indexPrefix + strings.Join(pairs, ","), nil
+
+	value := indexPrefix + strings.Join(pairs, ",")
+	chunks := make([]string, 0, (len(value)+maxCharStringLen-1)/maxCharStringLen)
+	for len(value) > maxCharStringLen {
+		chunks = append(chunks, value[:maxCharStringLen])
+		value = value[maxCharStringLen:]
+	}
+	return append(chunks, value), nil
 }
+
+// maxCharStringLen is the maximum length of a single character-string in a
+// DNS TXT record, in octets (RFC 1035).
+const maxCharStringLen = 255
 
 // maxLabelLen is the maximum length of a DNS label in octets (RFC 1035).
 const maxLabelLen = 63
