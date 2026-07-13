@@ -23,7 +23,7 @@ func TestServerServesTXT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	m := new(dns.Msg)
 	m.SetQuestion("_index._agents.example.com.", dns.TypeTXT)
@@ -53,7 +53,7 @@ func TestServerServesSVCB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	m := new(dns.Msg)
 	m.SetQuestion("chat.example.com.", dns.TypeSVCB)
@@ -95,7 +95,7 @@ func TestServerTruncatesUDPAndServesFullOverTCP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	m := new(dns.Msg)
 	m.SetQuestion("big.example.com.", dns.TypeTXT)
@@ -126,7 +126,7 @@ func TestServerAuthenticatedData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	// A DO=1 query simulates a security-aware client behind a validating
 	// resolver: the response must carry the AD flag.
@@ -158,7 +158,7 @@ func TestServerNoADByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	m := new(dns.Msg)
 	m.SetQuestion("chat.example.com.", dns.TypeSVCB)
@@ -177,7 +177,7 @@ func TestServerNXDomain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	m := new(dns.Msg)
 	m.SetQuestion("nonexistent.example.com.", dns.TypeTXT)
@@ -196,7 +196,7 @@ func TestServerNoData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer srv.Close()
+	defer srv.Close() //nolint:errcheck
 
 	// The name exists (has TXT and SVCB) but has no A record.
 	m := new(dns.Msg)

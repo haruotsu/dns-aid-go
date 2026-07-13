@@ -97,7 +97,7 @@ func (s *Server) listen() error {
 	addr := pc.LocalAddr().String()
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		pc.Close()
+		_ = pc.Close()
 		return fmt.Errorf("listen tcp on %s: %w", addr, err)
 	}
 
