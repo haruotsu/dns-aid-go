@@ -98,6 +98,19 @@ func TestParseIndexTXT(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			// DNS name comparison is case-insensitive (RFC 4343), so
+			// "Chat" and "chat" refer to the same FQDN.
+			name:    "duplicate agent name differing only in case",
+			txts:    []string{"agents=Chat:mcp,chat:a2a"},
+			wantErr: true,
+		},
+		{
+			// The input case of the name must be preserved in the result.
+			name: "mixed-case name preserved",
+			txts: []string{"agents=Chat:mcp"},
+			want: []IndexEntry{{Name: "Chat", Protocol: "mcp"}},
+		},
+		{
 			name:    "whitespace inside name",
 			txts:    []string{"agents=cha t:mcp"},
 			wantErr: true,
@@ -252,6 +265,16 @@ func TestFormatIndexTXT(t *testing.T) {
 			name: "duplicate names",
 			entries: []IndexEntry{
 				{Name: "chat", Protocol: "mcp"},
+				{Name: "chat", Protocol: "a2a"},
+			},
+			wantErr: true,
+		},
+		{
+			// DNS name comparison is case-insensitive (RFC 4343), so
+			// "Chat" and "chat" refer to the same FQDN.
+			name: "duplicate names differing only in case",
+			entries: []IndexEntry{
+				{Name: "Chat", Protocol: "mcp"},
 				{Name: "chat", Protocol: "a2a"},
 			},
 			wantErr: true,

@@ -58,10 +58,13 @@ func ParseIndexTXT(txts ...string) ([]IndexEntry, error) {
 		if err := validateIndexField("protocol", proto); err != nil {
 			return nil, fmt.Errorf("malformed index entry %q: %w", pair, err)
 		}
-		if seen[name] {
+		// DNS name comparison is case-insensitive (RFC 4343), so detect
+		// duplicates on the lowercased name while preserving input case.
+		key := strings.ToLower(name)
+		if seen[key] {
 			return nil, fmt.Errorf("duplicate agent name %q in index", name)
 		}
-		seen[name] = true
+		seen[key] = true
 
 		entries = append(entries, IndexEntry{Name: name, Protocol: proto})
 	}
@@ -80,10 +83,13 @@ func FormatIndexTXT(entries []IndexEntry) (string, error) {
 		if err := validateIndexField("protocol", e.Protocol); err != nil {
 			return "", err
 		}
-		if seen[e.Name] {
+		// DNS name comparison is case-insensitive (RFC 4343), so detect
+		// duplicates on the lowercased name while preserving input case.
+		key := strings.ToLower(e.Name)
+		if seen[key] {
 			return "", fmt.Errorf("duplicate agent name %q in index", e.Name)
 		}
-		seen[e.Name] = true
+		seen[key] = true
 
 		pairs = append(pairs, e.Name+":"+e.Protocol)
 	}
