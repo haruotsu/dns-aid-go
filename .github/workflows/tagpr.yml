@@ -38,7 +38,10 @@ jobs:
         if: steps.tagpr.outputs.tag != ''
         with:
           go-version: stable
-          cache: true
+          # Release binaries are built cold: the Actions build cache is not
+          # integrity-checked, so a poisoned cache could leak into published
+          # artifacts (CWE-349).
+          cache: false
       - uses: goreleaser/goreleaser-action@v6
         if: steps.tagpr.outputs.tag != ''
         with:
