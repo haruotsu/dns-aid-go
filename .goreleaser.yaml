@@ -3,7 +3,8 @@ version: 2
 project_name: dnsaid
 
 builds:
-  - main: ./cmd/dnsaid
+  - id: dnsaid
+    main: ./cmd/dnsaid
     binary: dnsaid
     # The release version is compiled in from internal/version/version.go
     # (rewritten by tagpr before tagging), so no ldflags injection is needed.
@@ -33,11 +34,12 @@ archives:
 kos:
   - repositories:
       - ghcr.io/haruotsu/dns-aid-go
-    main: ./cmd/dnsaid
-    env:
-      - CGO_ENABLED=0
-    flags:
-      - -trimpath
+    # main, env and flags are inherited from the referenced build so the
+    # binary and the image cannot drift apart.
+    build: dnsaid
+    # Pin the runtime base explicitly instead of relying on ko's default, so
+    # a ko upgrade cannot swap it unreviewed (distroless, static, nonroot).
+    base_image: cgr.dev/chainguard/static
     platforms:
       - linux/amd64
       - linux/arm64
