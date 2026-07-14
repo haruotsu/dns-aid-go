@@ -305,6 +305,24 @@ unrelated TXT "not an index"
 	}
 }
 
+func TestDiscoverIndexMissingWrapsCause(t *testing.T) {
+	r := newZoneResolver(t, `
+$ORIGIN example.com.
+$TTL 300
+unrelated TXT "not an index"
+`)
+
+	_, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	// The underlying resolver error must stay in the chain so callers can
+	// distinguish "name does not exist" from other index failures.
+	if !errors.Is(err, discover.ErrIndexNotFound) {
+		t.Errorf("Discover error = %v, want ErrIndexNotFound", err)
+	}
+	if !errors.Is(err, resolver.ErrNotFound) {
+		t.Errorf("Discover error = %v, want resolver.ErrNotFound in the chain", err)
+	}
+}
+
 func TestDiscoverIndexMalformed(t *testing.T) {
 	r := newZoneResolver(t, `
 $ORIGIN example.com.
@@ -480,6 +498,103 @@ func TestDiscoverRequireDNSSECDropsUnvalidatedAgent(t *testing.T) {
 	}
 	if !errors.Is(res.Errors[0], discover.ErrDNSSECRequired) {
 		t.Errorf("Errors[0] = %v, want ErrDNSSECRequired", res.Errors[0])
+	}
+}
+
+// txtADStrippingResolver removes the AD flag from TXT responses for one
+// FQDN, simulating a capability TXT record that fails validation while the
+// rest of the zone validates.
+type txtADStrippingResolver struct {
+	resolver.Resolver
+	fqdn string
+}
+
+func (r txtADStrippingResolver) LookupTXT(ctx context.Context, fqdn string) (resolver.TXTResponse, error) {
+	resp, err := r.Resolver.LookupTXT(ctx, fqdn)
+	if fqdn == r.fqdn {
+		resp.AD = false
+	}
+	return resp, err
+}
+
+func TestDiscoverRequireDNSSECRejectsUnvalidatedCapabilityTXT(t *testing.T) {
+	// Only the agent's capability TXT lookup loses the AD flag; the index
+	// TXT and every SVCB response stay validated.
+	r := txtADStrippingResolver{
+		Resolver: newFixtureResolver(t, "zone_full", resolvertest.WithAD()),
+		fqdn:     "chat.example.com",
+	}
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{RequireDNSSEC: true})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	// The agent itself was validated via SVCB, so it is still returned.
+	chat := agentByName(t, res.Agents, "chat")
+	// The unvalidated TXT data must not be trusted (OSS-03 §6.2).
+	if len(chat.Capabilities) != 0 {
+		t.Errorf("chat.Capabilities = %v, want empty", chat.Capabilities)
+	}
+	if chat.CapabilitySource != discover.CapabilitySourceNone {
+		t.Errorf("chat.CapabilitySource = %q, want %q", chat.CapabilitySource, discover.CapabilitySourceNone)
+	}
+	if len(res.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1: %v", len(res.Errors), res.Errors)
+	}
+	if !errors.Is(res.Errors[0], discover.ErrDNSSECRequired) {
+		t.Errorf("Errors[0] = %v, want ErrDNSSECRequired", res.Errors[0])
+	}
+	if !strings.Contains(res.Errors[0].Error(), "chat.example.com") {
+		t.Errorf("Errors[0] = %v, want mention of chat.example.com", res.Errors[0])
+	}
+}
+
+// txtFailingResolver makes LookupTXT fail for one FQDN with a fixed error,
+// simulating a transient failure (timeout, SERVFAIL) on the capability TXT
+// lookup.
+type txtFailingResolver struct {
+	resolver.Resolver
+	fqdn string
+	err  error
+}
+
+func (r txtFailingResolver) LookupTXT(ctx context.Context, fqdn string) (resolver.TXTResponse, error) {
+	if fqdn == r.fqdn {
+		return resolver.TXTResponse{}, r.err
+	}
+	return r.Resolver.LookupTXT(ctx, fqdn)
+}
+
+func TestDiscoverCapabilityTXTLookupFailureIsRecorded(t *testing.T) {
+	errServfail := errors.New("SERVFAIL")
+	r := txtFailingResolver{
+		Resolver: newFixtureResolver(t, "zone_full"),
+		fqdn:     "chat.example.com",
+		err:      errServfail,
+	}
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	// The agent is still returned without capabilities (partial success,
+	// R-DISC-5)...
+	chat := agentByName(t, res.Agents, "chat")
+	if chat.CapabilitySource != discover.CapabilitySourceNone {
+		t.Errorf("chat.CapabilitySource = %q, want %q", chat.CapabilitySource, discover.CapabilitySourceNone)
+	}
+	// ...but unlike a plain missing record (ErrNotFound), the failure is
+	// recorded so it is not silently mistaken for "no capabilities".
+	if len(res.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1: %v", len(res.Errors), res.Errors)
+	}
+	if !errors.Is(res.Errors[0], errServfail) {
+		t.Errorf("Errors[0] = %v, want wrapped %v", res.Errors[0], errServfail)
+	}
+	if !strings.Contains(res.Errors[0].Error(), "chat.example.com") {
+		t.Errorf("Errors[0] = %v, want mention of chat.example.com", res.Errors[0])
 	}
 }
 

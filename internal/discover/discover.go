@@ -130,7 +130,9 @@ func Discover(ctx context.Context, r resolver.Resolver, domain string, opts Opti
 			continue
 		}
 		rec.Domain = domain
-		fillCapabilities(ctx, r, &rec)
+		if err := fillCapabilities(ctx, r, &rec, opts); err != nil {
+			res.Errors = append(res.Errors, err)
+		}
 		res.Agents = append(res.Agents, rec)
 	}
 
@@ -158,7 +160,7 @@ func matchesFilters(e record.IndexEntry, opts Options) bool {
 func lookupIndex(ctx context.Context, r resolver.Resolver, domain string, opts Options) ([]record.IndexEntry, error) {
 	resp, err := r.LookupTXT(ctx, indexLabel+domain)
 	if err != nil {
-		return nil, fmt.Errorf("%w at %s%s: %v", ErrIndexNotFound, indexLabel, domain, err)
+		return nil, fmt.Errorf("%w at %s%s: %w", ErrIndexNotFound, indexLabel, domain, err)
 	}
 	if opts.RequireDNSSEC && !resp.AD {
 		return nil, fmt.Errorf("%w: index %s%s", ErrDNSSECRequired, indexLabel, domain)
@@ -176,7 +178,7 @@ func lookupIndex(ctx context.Context, r resolver.Resolver, domain string, opts O
 		}
 		return entries, nil
 	}
-	return nil, fmt.Errorf("%w at %s%s: %v", ErrIndexNotFound, indexLabel, domain, lastErr)
+	return nil, fmt.Errorf("%w at %s%s: %w", ErrIndexNotFound, indexLabel, domain, lastErr)
 }
 
 // queryAgent resolves one index entry into an AgentRecord via its SVCB
@@ -249,13 +251,25 @@ const (
 // document (rec.CapURI) is stubbed until PR-11, so the priority order
 // degenerates to the TXT fallback: the first "capabilities=" and "version="
 // key found in the agent's TXT records win. A missing TXT record is normal,
-// not an error.
-func fillCapabilities(ctx context.Context, r resolver.Resolver, rec *AgentRecord) {
+// not an error; any other failure is returned so the caller can record it,
+// with the agent kept at CapabilitySource "none" (partial success, R-DISC-5).
+func fillCapabilities(ctx context.Context, r resolver.Resolver, rec *AgentRecord, opts Options) error {
 	rec.CapabilitySource = CapabilitySourceNone
 
 	resp, err := r.LookupTXT(ctx, rec.FQDN)
 	if err != nil {
-		return
+		// A missing record is the normal "no capabilities advertised"
+		// case; any other failure (timeout, SERVFAIL) is reported.
+		if errors.Is(err, resolver.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("capability TXT %s: %w", rec.FQDN, err)
+	}
+	// An unvalidated capability TXT record must not be trusted when DNSSEC
+	// is required (OSS-03 §6.2); the agent itself was already validated via
+	// its SVCB response.
+	if opts.RequireDNSSEC && !resp.AD {
+		return fmt.Errorf("%w: capability TXT %s", ErrDNSSECRequired, rec.FQDN)
 	}
 	for _, txt := range resp.Records {
 		for _, s := range txt {
@@ -268,6 +282,7 @@ func fillCapabilities(ctx context.Context, r resolver.Resolver, rec *AgentRecord
 			}
 		}
 	}
+	return nil
 }
 
 // splitCapabilities splits a "capabilities=" value on commas, trimming
