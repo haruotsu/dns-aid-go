@@ -273,6 +273,83 @@ func TestZoneIndexesParse(t *testing.T) {
 	}
 }
 
+// indexPrefix is the owner-name prefix of the agent index TXT record.
+const indexPrefix = "_index._agents."
+
+// Every record in every zone fixture must be served by the in-process DNS
+// server: each (owner, qtype) pair listed in the zone file is queried and
+// must answer NOERROR with exactly as many RRs as the zone declares. Every
+// agent record's owner must also be listed in the zone's index, so an owner
+// typo (e.g. "biling") that the index does not know about fails here rather
+// than surfacing later in consumers. New zone fixtures are covered
+// automatically via the glob in zoneFiles.
+func TestZonesServeEveryRecord(t *testing.T) {
+	type question struct {
+		owner string
+		qtype uint16
+	}
+
+	for _, name := range zoneFiles(t) {
+		t.Run(name, func(t *testing.T) {
+			zone, err := fixture.Zone(name)
+			if err != nil {
+				t.Fatalf("fixture.Zone: %v", err)
+			}
+
+			// Enumerate every RR the fixture declares and locate the index.
+			wantAnswers := map[question]int{}
+			var indexOwner string
+			var indexTXT []string
+			zp := dns.NewZoneParser(strings.NewReader(zone), "", "")
+			for rr, ok := zp.Next(); ok; rr, ok = zp.Next() {
+				h := rr.Header()
+				wantAnswers[question{h.Name, h.Rrtype}]++
+				if txt, ok := rr.(*dns.TXT); ok && strings.HasPrefix(h.Name, indexPrefix) {
+					indexOwner, indexTXT = h.Name, txt.Txt
+				}
+			}
+			if err := zp.Err(); err != nil {
+				t.Fatalf("parse zone: %v", err)
+			}
+			if indexOwner == "" {
+				t.Fatal("zone fixture has no agent index TXT record")
+			}
+
+			// Every agent owner must be announced by the index.
+			entries, err := record.ParseIndexTXT(indexTXT...)
+			if err != nil {
+				t.Fatalf("ParseIndexTXT(%q): %v", indexTXT, err)
+			}
+			apex := strings.TrimPrefix(indexOwner, indexPrefix)
+			indexed := make(map[string]bool, len(entries))
+			for _, e := range entries {
+				indexed[e.Name+"."+apex] = true
+			}
+			for q := range wantAnswers {
+				if q.owner != indexOwner && !indexed[q.owner] {
+					t.Errorf("owner %q has records but is not listed in the index %q",
+						q.owner, indexTXT)
+				}
+			}
+
+			// Every declared RRset must be served in full.
+			addr := serveZone(t, name)
+			for q, want := range wantAnswers {
+				r := exchange(t, addr, q.owner, q.qtype)
+				if r.Rcode != dns.RcodeSuccess {
+					t.Errorf("%s %s: Rcode = %s, want NOERROR",
+						q.owner, dns.TypeToString[q.qtype], dns.RcodeToString[r.Rcode])
+					continue
+				}
+				if len(r.Answer) != want {
+					t.Errorf("%s %s: len(Answer) = %d, want %d (records in zone file)",
+						q.owner, dns.TypeToString[q.qtype], len(r.Answer), want)
+				}
+			}
+		})
+	}
+}
+
 // A fixture name that does not exist must surface a clear error rather
 // than an empty zone.
 func TestZoneUnknownNameFails(t *testing.T) {
