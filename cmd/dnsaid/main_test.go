@@ -6,8 +6,8 @@ package main
 //
 // Test list:
 // - [x] discover with no arguments fails with usage (exit 1)
-// - [ ] discover zone_full prints the human summary (golden, exit 0)
-// - [ ] discover zone_full --json prints agents[]+errors[] (golden, exit 0)
+// - [x] discover zone_full prints the human summary (golden, exit 0)
+// - [x] discover zone_full --json prints agents[]+errors[] (golden, exit 0)
 // - [ ] discover zone_partial warns on stderr per failed agent, exit 0
 // - [ ] discover zone_partial --json records errors[] (golden)
 // - [ ] discover zone_index_only finds 0 agents, exit 1
@@ -101,6 +101,62 @@ func TestDiscoverZoneFullJSON(t *testing.T) {
 		t.Errorf("stderr = %q, want empty", stderr)
 	}
 	checkGolden(t, "discover_full_json.golden", stdout)
+}
+
+func TestDiscoverZonePartialWarnsAndSucceeds(t *testing.T) {
+	startZone(t, "zone_partial")
+
+	stdout, stderr, code := runCLI("discover", "example.com")
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0 (partial success, R-DISC-5)", code)
+	}
+	for _, fqdn := range []string{"legacy.example.com", "ghost.example.com"} {
+		if !strings.Contains(stderr, "WARN") || !strings.Contains(stderr, fqdn) {
+			t.Errorf("stderr should warn about %s, got:\n%s", fqdn, stderr)
+		}
+	}
+	checkGolden(t, "discover_partial_human.golden", stdout)
+}
+
+func TestDiscoverZonePartialJSONRecordsErrors(t *testing.T) {
+	startZone(t, "zone_partial")
+
+	stdout, _, code := runCLI("discover", "example.com", "--json")
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	checkGolden(t, "discover_partial_json.golden", stdout)
+}
+
+func TestDiscoverZoneIndexOnlyFails(t *testing.T) {
+	startZone(t, "zone_index_only")
+
+	stdout, stderr, code := runCLI("discover", "example.com")
+
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (index entries but zero agents)", code)
+	}
+	if !strings.Contains(stdout, "FOUND 0 agents") {
+		t.Errorf("stdout should report zero agents, got:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "WARN") || !strings.Contains(stderr, "chat.example.com") {
+		t.Errorf("stderr should warn about chat.example.com, got:\n%s", stderr)
+	}
+}
+
+func TestDiscoverIndexNotFoundExitCode(t *testing.T) {
+	startZone(t, "zone_full")
+
+	_, stderr, code := runCLI("discover", "other.example")
+
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2 (ErrIndexNotFound)", code)
+	}
+	if !strings.Contains(stderr, "agent index not found") {
+		t.Errorf("stderr should name the missing index, got:\n%s", stderr)
+	}
 }
 
 func TestDiscoverNoArgsFailsWithUsage(t *testing.T) {
