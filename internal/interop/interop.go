@@ -241,8 +241,11 @@ func extractJSONDocument(data []byte) ([]byte, error) {
 // (e.g. "https://chat.example.com:443") into host and port.
 func splitEndpointURL(endpoint string) (string, uint16, error) {
 	u, err := url.Parse(endpoint)
-	if err != nil || u.Host == "" {
-		return "", 0, fmt.Errorf("endpoint %q is not a URL with a host: %v", endpoint, err)
+	if err != nil {
+		return "", 0, fmt.Errorf("endpoint %q is not a URL: %w", endpoint, err)
+	}
+	if u.Host == "" {
+		return "", 0, fmt.Errorf("endpoint %q has no host", endpoint)
 	}
 	if u.Port() == "" {
 		return u.Hostname(), defaultPort, nil

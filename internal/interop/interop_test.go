@@ -163,6 +163,9 @@ func TestNormalizeRefCustomParams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NormalizeRef: %v", err)
 	}
+	if len(got.Agents) != 1 {
+		t.Fatalf("len(Agents) = %d, want 1", len(got.Agents))
+	}
 	a := got.Agents[0]
 	if a.BAP != "mcp=1.0" {
 		t.Errorf("BAP = %q, want %q", a.BAP, "mcp=1.0")
@@ -182,6 +185,47 @@ func TestNormalizeRefCustomParams(t *testing.T) {
 func TestNormalizeRefRejectsNonJSON(t *testing.T) {
 	if _, err := NormalizeRef([]byte("log line only, no document\n")); err == nil {
 		t.Error("NormalizeRef on log-only output: got nil error, want error")
+	}
+}
+
+func TestNormalizeRejectsBrokenJSON(t *testing.T) {
+	broken := []byte(`{"agents": [`)
+	if _, err := NormalizeGo(broken); err == nil {
+		t.Error("NormalizeGo on truncated JSON: got nil error, want error")
+	}
+	if _, err := NormalizeRef(broken); err == nil {
+		t.Error("NormalizeRef on truncated JSON: got nil error, want error")
+	}
+}
+
+func TestNormalizeRefRejectsBadEndpoints(t *testing.T) {
+	cases := []struct {
+		name     string
+		endpoint string
+	}{
+		// A schemeless host:port parses as scheme "chat.example.com"
+		// with no host, so it must be rejected, not silently emptied.
+		{"schemeless host", "chat.example.com:443"},
+		{"empty", ""},
+		{"port out of range", "https://chat.example.com:99999"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := `{"domain": "example.com", "agents": [{"name": "chat", "protocol": "mcp", "endpoint": "` + tc.endpoint + `", "endpoint_source": "dns_svcb"}]}`
+			_, err := NormalizeRef([]byte(doc))
+			if err == nil {
+				t.Errorf("NormalizeRef with endpoint %q: got nil error, want error", tc.endpoint)
+			}
+		})
+	}
+}
+
+func TestDiffReportsDomainMismatch(t *testing.T) {
+	a := Doc{Domain: "example.com"}
+	b := Doc{Domain: "example.org"}
+	d := Diff(a, b)
+	if len(d) == 0 || !strings.Contains(d[0], "domain") {
+		t.Errorf("Diff = %v, want a domain mismatch report", d)
 	}
 }
 
