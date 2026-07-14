@@ -230,15 +230,15 @@ func TestDiffReportsDomainMismatch(t *testing.T) {
 }
 
 func TestDiffEqual(t *testing.T) {
-	goDoc, err := NormalizeGo([]byte(goSample))
+	goResult, err := NormalizeGo([]byte(goSample))
 	if err != nil {
 		t.Fatalf("NormalizeGo: %v", err)
 	}
-	refDoc, err := NormalizeRef([]byte(refSample))
+	refResult, err := NormalizeRef([]byte(refSample))
 	if err != nil {
 		t.Fatalf("NormalizeRef: %v", err)
 	}
-	if d := Diff(goDoc, refDoc); len(d) != 0 {
+	if d := Diff(goResult, refResult); len(d) != 0 {
 		t.Errorf("Diff of equal docs = %v, want none", d)
 	}
 }
