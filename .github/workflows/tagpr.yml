@@ -18,7 +18,24 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # goreleaser refuses to run against a shallow clone.
+          fetch-depth: 0
       - id: tagpr
         uses: Songmu/tagpr@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Tags created with GITHUB_TOKEN never trigger other workflows, so
+      # goreleaser must run here, in the same job, right after tagpr tags
+      # (guarded by outputs.tag, which is empty on non-release pushes).
+      - uses: actions/setup-go@v5
+        if: steps.tagpr.outputs.tag != ''
+        with:
+          go-version: stable
+          cache: true
+      - uses: goreleaser/goreleaser-action@v6
+        if: steps.tagpr.outputs.tag != ''
+        with:
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

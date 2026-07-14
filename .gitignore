@@ -4,6 +4,9 @@
 # Binaries for programs and plugins
 /dnsaid
 *.exe
+
+# goreleaser output
+/dist/
 *.exe~
 *.dll
 *.so

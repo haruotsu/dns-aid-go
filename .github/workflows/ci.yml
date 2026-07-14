@@ -32,6 +32,16 @@ jobs:
       - name: go test
         run: go test -race -coverprofile=coverage.out ./...
 
+  # Validate .goreleaser.yaml on every change so a broken release config
+  # surfaces in PR review, not during the release itself.
+  goreleaser-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          args: check
+
   lint:
     runs-on: ubuntu-latest
     steps:
