@@ -28,7 +28,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
-          cache: true
+          # The scheduled run installs an unpinned reference release
+          # before any Go step; keep it away from the shared module
+          # cache so a compromised release cannot poison the cache that
+          # push/PR (and release) builds restore.
+          cache: ${{ github.event_name != 'schedule' }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
