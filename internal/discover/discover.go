@@ -250,10 +250,10 @@ func queryAgent(ctx context.Context, r resolver.Resolver, e record.IndexEntry, f
 			rec.Port = v.Port
 		}
 	}
-	// ALPN values come straight from DNS and override the agent's
-	// Protocol; a control character here could inject terminal escapes
-	// into CLI output, and an empty or non-printable value makes the
-	// endpoint identity suspect, so the agent is rejected.
+	// ALPN values come straight from DNS and flow into CLI output; a
+	// control character here could inject terminal escapes, and an empty
+	// or non-printable value makes the endpoint identity suspect, so the
+	// agent is rejected.
 	for _, alpn := range rec.ALPN {
 		if !isVisibleASCII(alpn) {
 			return AgentRecord{}, fmt.Errorf("agent %s: SVCB alpn value %q is not printable ASCII", fqdn, alpn)

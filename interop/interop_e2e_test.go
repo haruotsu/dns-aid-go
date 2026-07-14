@@ -59,16 +59,16 @@ func TestDiscoverMatchesReferenceImplementation(t *testing.T) {
 			}
 			defer srv.Close() //nolint:errcheck // best-effort test cleanup
 
-			goDoc := runGoCLI(t, goCLI, srv.Addr)
-			refDoc := runReferenceCLI(t, refCLI, pythonPath, srv.Addr)
+			goResult := runGoCLI(t, goCLI, srv.Addr)
+			refResult := runReferenceCLI(t, refCLI, pythonPath, srv.Addr)
 
-			if len(goDoc.Agents) != tc.wantAgents {
-				t.Errorf("dnsaid found %d agents, want %d", len(goDoc.Agents), tc.wantAgents)
+			if len(goResult.Agents) != tc.wantAgents {
+				t.Errorf("dnsaid found %d agents, want %d", len(goResult.Agents), tc.wantAgents)
 			}
-			if len(refDoc.Agents) != tc.wantAgents {
-				t.Errorf("reference found %d agents, want %d", len(refDoc.Agents), tc.wantAgents)
+			if len(refResult.Agents) != tc.wantAgents {
+				t.Errorf("reference found %d agents, want %d", len(refResult.Agents), tc.wantAgents)
 			}
-			for _, d := range Diff(goDoc, refDoc) {
+			for _, d := range Diff(goResult, refResult) {
 				t.Errorf("dnsaid vs reference: %s", d)
 			}
 		})

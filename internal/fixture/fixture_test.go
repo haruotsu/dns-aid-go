@@ -159,10 +159,10 @@ func TestZoneCustomParamsCarriesAllDraftKeys(t *testing.T) {
 		// The reference implementation only accepts a single
 		// "<protocol>[=<version>]" token here; a value it rejects would
 		// make it drop the whole agent and break the interop comparison.
-		BAP: "mcp=1.0",
-		Policy:    "https://example.com/agent-policy",
-		Realm:     "production",
-		Sig:       "c2lnLXBsYWNlaG9sZGVy",
+		BAP:    "mcp=1.0",
+		Policy: "https://example.com/agent-policy",
+		Realm:  "production",
+		Sig:    "c2lnLXBsYWNlaG9sZGVy",
 	}
 	if params.Cap != want.Cap {
 		t.Errorf("cap = %q, want %q", params.Cap, want.Cap)
