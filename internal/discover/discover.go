@@ -36,12 +36,14 @@ var (
 // (R-DISC-1).
 const indexLabel = "_index._agents."
 
-// maxIndexEntries bounds how many index entries one Discover call resolves.
-// Each entry costs two queries (SVCB + capability TXT), so an unbounded
-// index in a hostile or broken zone (a TXT RRset can reach ~64KB over TCP)
-// would amplify one lookup into tens of thousands of queries. 256 agents
-// per domain is generous versus any realistic deployment; the excess is
-// skipped with one error recorded, not a failure (R-DISC-5).
+// maxIndexEntries bounds how many filter-matching index entries one Discover
+// call resolves. Each entry costs two queries (SVCB + capability TXT), so an
+// unbounded index in a hostile or broken zone (a TXT RRset can reach ~64KB
+// over TCP) would amplify one lookup into tens of thousands of queries. 256
+// agents per domain is generous versus any realistic deployment; matching
+// entries beyond the bound are skipped with one error recorded, not a
+// failure (R-DISC-5). Filtering happens before the bound is applied, so an
+// agent named via Options.Name is found regardless of its index position.
 const maxIndexEntries = 256
 
 // EndpointSource values report how an agent's endpoint was resolved
@@ -133,16 +135,19 @@ func Discover(ctx context.Context, r resolver.Resolver, domain string, opts Opti
 	}
 
 	res := Result{Index: entries}
-	if len(entries) > maxIndexEntries {
-		res.Errors = append(res.Errors, fmt.Errorf(
-			"index at %s%s lists %d agents, only the first %d processed",
-			indexLabel, domain, len(entries), maxIndexEntries))
-		entries = entries[:maxIndexEntries]
-	}
+	// The bound applies to the entries that pass the filters, not to the
+	// index position: an agent named via Options.Name is found no matter
+	// how deep in the index it is listed.
+	processed, skipped := 0, 0
 	for _, e := range entries {
 		if !matchesFilters(e, opts) {
 			continue
 		}
+		if processed >= maxIndexEntries {
+			skipped++
+			continue
+		}
+		processed++
 		fqdn := e.Name + "." + domain
 		rec, err := queryAgent(ctx, r, e, fqdn, opts)
 		if err != nil {
@@ -154,6 +159,11 @@ func Discover(ctx context.Context, r resolver.Resolver, domain string, opts Opti
 			res.Errors = append(res.Errors, err)
 		}
 		res.Agents = append(res.Agents, rec)
+	}
+	if skipped > 0 {
+		res.Errors = append(res.Errors, fmt.Errorf(
+			"index at %s%s lists %d matching agents, only the first %d processed (%d skipped)",
+			indexLabel, domain, processed+skipped, maxIndexEntries, skipped))
 	}
 
 	// A lookup naming one agent must yield it (OSS-03 §6.2).
@@ -216,9 +226,6 @@ func queryAgent(ctx context.Context, r resolver.Resolver, e record.IndexEntry, f
 	if err != nil {
 		return AgentRecord{}, fmt.Errorf("agent %s: %w", fqdn, err)
 	}
-	if err := checkMandatory(svcb); err != nil {
-		return AgentRecord{}, fmt.Errorf("agent %s: %w", fqdn, err)
-	}
 
 	rec := AgentRecord{
 		Name:            e.Name,
@@ -270,6 +277,22 @@ func queryAgent(ctx context.Context, r resolver.Resolver, e record.IndexEntry, f
 	rec.Policy = params.Policy
 	rec.Realm = params.Realm
 	rec.Sig = params.Sig
+	// Custom parameter values come straight from raw wire bytes and flow
+	// into CLI output; legitimate values are URIs, base64url, or tokens,
+	// so anything outside visible ASCII risks terminal escape injection
+	// and rejects the agent (same policy as ALPN above).
+	for _, p := range []struct{ name, value string }{
+		{"cap", rec.CapURI},
+		{"cap-sha256", rec.CapSHA256},
+		{"bap", rec.BAP},
+		{"policy", rec.Policy},
+		{"realm", rec.Realm},
+		{"sig", rec.Sig},
+	} {
+		if p.value != "" && !isVisibleASCII(p.value) {
+			return AgentRecord{}, fmt.Errorf("agent %s: SVCB %s value %q is not printable ASCII", fqdn, p.name, p.value)
+		}
+	}
 
 	return rec, nil
 }
@@ -405,12 +428,19 @@ func supportedSVCBKey(key dns.SVCBKey) bool {
 }
 
 // selectSVCB picks the preferred record from an SVCB RRset: the lowest
-// SvcPriority among ServiceMode records (RFC 9460 §2.4.1). AliasMode
-// records (SvcPriority 0) are not followed.
+// SvcPriority among the usable ServiceMode records (RFC 9460 §2.4.1).
+// AliasMode records (SvcPriority 0) are not followed, and a record failing
+// the mandatory check (RFC 9460 §8) is ignored so selection falls back to
+// the next-lowest-priority record.
 func selectSVCB(records []*dns.SVCB) (*dns.SVCB, error) {
 	var best *dns.SVCB
+	var mandatoryErr error
 	for _, svcb := range records {
 		if svcb.Priority == 0 {
+			continue
+		}
+		if err := checkMandatory(svcb); err != nil {
+			mandatoryErr = err
 			continue
 		}
 		if best == nil || svcb.Priority < best.Priority {
@@ -418,6 +448,9 @@ func selectSVCB(records []*dns.SVCB) (*dns.SVCB, error) {
 		}
 	}
 	if best == nil {
+		if mandatoryErr != nil {
+			return nil, fmt.Errorf("no usable ServiceMode SVCB record: %w", mandatoryErr)
+		}
 		return nil, fmt.Errorf("no ServiceMode SVCB record (AliasMode is not supported)")
 	}
 	return best, nil

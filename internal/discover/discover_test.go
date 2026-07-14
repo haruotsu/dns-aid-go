@@ -729,6 +729,40 @@ func TestDiscoverBoundsIndexEntryCount(t *testing.T) {
 	}
 }
 
+func TestDiscoverNameFilterReachesEntriesBeyondBound(t *testing.T) {
+	// The entry-count bound limits how many entries are resolved, not how
+	// far into the index the Name filter can see: naming an agent listed
+	// beyond the bound still runs at most one query, so it must succeed
+	// (Options.Name contract).
+	const total = 300
+	entries := make([]record.IndexEntry, total)
+	for i := range entries {
+		entries[i] = record.IndexEntry{Name: fmt.Sprintf("a%03d", i), Protocol: "mcp"}
+	}
+	chunks, err := record.FormatIndexTXT(entries)
+	if err != nil {
+		t.Fatalf("FormatIndexTXT: %v", err)
+	}
+	r := wildcardSVCBResolver{stubResolver{
+		txt: map[string]resolver.TXTResponse{
+			"_index._agents.example.com": {Records: [][]string{chunks}},
+		},
+	}}
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{Name: "a299"})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	if len(res.Agents) != 1 {
+		t.Fatalf("len(Agents) = %d, want 1", len(res.Agents))
+	}
+	agentByName(t, res.Agents, "a299")
+	if len(res.Errors) != 0 {
+		t.Errorf("len(Errors) = %d, want 0: %v", len(res.Errors), res.Errors)
+	}
+}
+
 func TestDiscoverALPNDoesNotAliasSVCBRecord(t *testing.T) {
 	// The wire client decodes a fresh record per response, so aliasing of
 	// the record's internal slice is only observable with a stub resolver
@@ -836,6 +870,50 @@ func TestDiscoverRejectsNonPrintableALPN(t *testing.T) {
 	}
 }
 
+func TestDiscoverRejectsNonPrintableCustomSVCBParam(t *testing.T) {
+	// Custom SVCB parameter values (cap, cap-sha256, bap, policy, realm,
+	// sig) come straight from raw wire bytes and flow into CLI output; a
+	// control character in any of them could inject terminal escapes, so
+	// the agent must be rejected. The zone-file parser does not round-trip
+	// control characters, hence the stub resolver.
+	r := stubResolver{
+		svcb: map[string]resolver.SVCBResponse{
+			"chat.example.com": {Records: []*dns.SVCB{{
+				Priority: 1,
+				Target:   "chat.example.com.",
+				Value: []dns.SVCBKeyValue{
+					&dns.SVCBAlpn{Alpn: []string{"mcp"}},
+					&dns.SVCBLocal{KeyCode: record.KeyRealm, Data: []byte("prod\x1buction")},
+				},
+			}}},
+		},
+		txt: map[string]resolver.TXTResponse{
+			"_index._agents.example.com": {Records: [][]string{{"agents=chat:mcp"}}},
+		},
+	}
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	if len(res.Agents) != 0 {
+		t.Errorf("len(Agents) = %d, want 0", len(res.Agents))
+	}
+	if len(res.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1: %v", len(res.Errors), res.Errors)
+	}
+	// The error must name the failing agent and the offending parameter so
+	// the CLI warning (OSS-03 §6.1) can point at them.
+	msg := res.Errors[0].Error()
+	if !strings.Contains(msg, "chat.example.com") {
+		t.Errorf("Errors[0] = %v, want mention of chat.example.com", res.Errors[0])
+	}
+	if !strings.Contains(msg, "realm") {
+		t.Errorf("Errors[0] = %v, want mention of realm", res.Errors[0])
+	}
+}
+
 func TestDiscoverIgnoresNonPrintableCapabilityTXTValues(t *testing.T) {
 	// Capabilities and version parsed from TXT flow into CLI output; a
 	// value containing control characters is ignored (treated as not
@@ -932,6 +1010,35 @@ chat           SVCB 1 chat.example.com. alpn="mcp" port=443 mandatory="alpn,ipv4
 	}
 	if !strings.Contains(msg, "ipv4hint") {
 		t.Errorf("Errors[0] = %v, want mention of ipv4hint", res.Errors[0])
+	}
+}
+
+func TestDiscoverSVCBMandatoryFallsBackToNextPriority(t *testing.T) {
+	// A record whose mandatory parameter lists an unimplemented key is
+	// ignored, not the whole RRset (RFC 9460 §8): selection must fall back
+	// to the next-lowest-priority ServiceMode record that is usable.
+	r := newZoneResolver(t, `
+$ORIGIN example.com.
+$TTL 300
+_index._agents TXT "agents=chat:mcp"
+chat           SVCB 1 primary.example.com. alpn="mcp" port=443 mandatory="alpn,ipv4hint" ipv4hint="192.0.2.1"
+chat           SVCB 2 backup.example.com. alpn="mcp" port=8443
+`)
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	chat := agentByName(t, res.Agents, "chat")
+	if chat.Endpoint != "backup.example.com" {
+		t.Errorf("chat.Endpoint = %q, want %q", chat.Endpoint, "backup.example.com")
+	}
+	if chat.Port != 8443 {
+		t.Errorf("chat.Port = %d, want 8443", chat.Port)
+	}
+	if len(res.Errors) != 0 {
+		t.Errorf("len(Errors) = %d, want 0: %v", len(res.Errors), res.Errors)
 	}
 }
 
