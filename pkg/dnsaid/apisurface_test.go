@@ -88,11 +88,40 @@ func TestExampleFilesDoNotImportInternal(t *testing.T) {
 		}
 		for _, imp := range f.Imports {
 			path := strings.Trim(imp.Path.Value, `"`)
-			if strings.Contains(path, "/internal/") || strings.HasSuffix(path, "/internal") {
+			if isInternalPkgPath(path) {
 				t.Errorf("%s declares an Example but imports internal package %s", name, path)
 			}
 		}
 	}
+}
+
+// TestIsInternalPkgPath pins the internal-package detection shared by the
+// API-surface and Example guards: both bare ".../internal" packages and
+// packages nested under ".../internal/" are internal, while names that merely
+// start with "internal" are not.
+func TestIsInternalPkgPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"github.com/haruotsu/dns-aid-go/internal", true},
+		{"github.com/haruotsu/dns-aid-go/internal/discover", true},
+		{"github.com/haruotsu/dns-aid-go/internalfoo", false},
+		{"github.com/haruotsu/dns-aid-go/pkg/dnsaid", false},
+		{"github.com/haruotsu/dns-aid-go/xinternal", false},
+	}
+	for _, tt := range tests {
+		if got := isInternalPkgPath(tt.path); got != tt.want {
+			t.Errorf("isInternalPkgPath(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+// isInternalPkgPath reports whether path names a Go internal package: either
+// a bare ".../internal" package or one nested under an internal directory.
+// Prefix matching alone would wrongly flag names like "internalfoo".
+func isInternalPkgPath(path string) bool {
+	return strings.Contains(path, "/internal/") || strings.HasSuffix(path, "/internal")
 }
 
 func objKind(obj types.Object) string {
@@ -110,8 +139,8 @@ func objKind(obj types.Object) string {
 }
 
 // findInternalType walks t and returns the string of the first named type
-// found whose defining package path contains "/internal/", or "" when there
-// is none. seen breaks cycles (e.g. recursive struct types).
+// found whose defining package is internal (isInternalPkgPath), or "" when
+// there is none. seen breaks cycles (e.g. recursive struct types).
 func findInternalType(t types.Type, seen map[types.Type]bool) string {
 	if t == nil {
 		return ""
@@ -126,7 +155,7 @@ func findInternalType(t types.Type, seen map[types.Type]bool) string {
 
 	switch t := t.(type) {
 	case *types.Named:
-		if p := t.Obj().Pkg(); p != nil && strings.Contains(p.Path(), "/internal/") {
+		if p := t.Obj().Pkg(); p != nil && isInternalPkgPath(p.Path()) {
 			return t.String()
 		}
 		// Type arguments of generic instantiations (e.g. box[internalT])

@@ -96,7 +96,10 @@ type Result struct {
 // Options configures one Discover call.
 type Options struct {
 	// Protocol keeps only the index entries advertising this protocol.
-	// Empty means no filter. The comparison is case-insensitive.
+	// It matches the protocol named in the domain index entry, not the
+	// ALPN-derived AgentRecord.Protocol, which may differ (e.g. "https"
+	// in the index vs "h2" from the record's ALPN). Empty means no
+	// filter. The comparison is case-insensitive.
 	Protocol string
 
 	// Name looks up a single agent by its index name. When it is not in
