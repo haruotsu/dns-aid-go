@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"os"
 	"path/filepath"
@@ -266,6 +267,48 @@ func TestDiscoverValidTimeoutSucceeds(t *testing.T) {
 
 	if code != 0 {
 		t.Errorf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+}
+
+// failingWriter simulates a broken stdout (closed pipe, full disk).
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
+
+func TestDiscoverBrokenStdoutFails(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"human", []string{"discover", "example.com"}},
+		{"json", []string{"discover", "example.com", "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			startZone(t, "zone_full")
+			var stderr bytes.Buffer
+
+			code := run(tc.args, failingWriter{}, &stderr)
+
+			if code != 1 {
+				t.Errorf("exit code = %d, want 1 (truncated output must not look successful)", code)
+			}
+			if !strings.Contains(stderr.String(), "write failed") {
+				t.Errorf("stderr should report the write failure, got:\n%s", stderr.String())
+			}
+		})
+	}
+}
+
+func TestDiscoverHelpDocumentsEnvVars(t *testing.T) {
+	stdout, _, code := runCLI("discover", "--help")
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	for _, env := range []string{"DNSAID_RESOLVER", "DNSAID_TIMEOUT"} {
+		if !strings.Contains(stdout, env) {
+			t.Errorf("help should document %s, got:\n%s", env, stdout)
+		}
 	}
 }
 

@@ -14,33 +14,39 @@ import (
 const indexSource = "dns_txt"
 
 // writeHuman prints the discover result in the human format of OSS-03 §6.1.
-func writeHuman(w io.Writer, domain string, res dnsaid.Result) {
+// The text is rendered in memory first so the writer sees a single write
+// whose error can be reported; a silently truncated report must not exit 0.
+func writeHuman(w io.Writer, domain string, res dnsaid.Result) error {
+	var b strings.Builder
 	noun := "agents"
 	if len(res.Agents) == 1 {
 		noun = "agent"
 	}
-	fmt.Fprintf(w, "FOUND %d %s at %s  (index: %s)\n", len(res.Agents), noun, domain, indexSource)
-	if len(res.Agents) == 0 {
-		return
-	}
-	fmt.Fprintln(w)
+	fmt.Fprintf(&b, "FOUND %d %s at %s  (index: %s)\n", len(res.Agents), noun, domain, indexSource)
+	if len(res.Agents) > 0 {
+		fmt.Fprintln(&b)
 
-	// Column widths of the FQDN / protocol / endpoint columns, so the
-	// dnssec flags line up like the design example.
-	var wFQDN, wProto, wEndpoint int
-	for _, a := range res.Agents {
-		wFQDN = max(wFQDN, len(a.FQDN))
-		wProto = max(wProto, len(a.Protocol))
-		wEndpoint = max(wEndpoint, len(endpoint(a)))
-	}
-	for _, a := range res.Agents {
-		fmt.Fprintf(w, "  %-*s  %-*s  →  %-*s  [dnssec:%s]\n",
-			wFQDN, a.FQDN, wProto, a.Protocol, wEndpoint, endpoint(a), dnssecStatus(a))
-		if len(a.Capabilities) > 0 {
-			fmt.Fprintf(w, "    capabilities: %s  (source: %s)\n",
-				strings.Join(a.Capabilities, ", "), a.CapabilitySource)
+		// Column widths of the FQDN / protocol / endpoint / capabilities
+		// columns, so the dnssec flags and capability sources line up
+		// like the design example.
+		var wFQDN, wProto, wEndpoint, wCaps int
+		for _, a := range res.Agents {
+			wFQDN = max(wFQDN, len(a.FQDN))
+			wProto = max(wProto, len(a.Protocol))
+			wEndpoint = max(wEndpoint, len(endpoint(a)))
+			wCaps = max(wCaps, len(strings.Join(a.Capabilities, ", ")))
+		}
+		for _, a := range res.Agents {
+			fmt.Fprintf(&b, "  %-*s  %-*s  →  %-*s  [dnssec:%s]\n",
+				wFQDN, a.FQDN, wProto, a.Protocol, wEndpoint, endpoint(a), dnssecStatus(a))
+			if len(a.Capabilities) > 0 {
+				fmt.Fprintf(&b, "    capabilities: %-*s  (source: %s)\n",
+					wCaps, strings.Join(a.Capabilities, ", "), a.CapabilitySource)
+			}
 		}
 	}
+	_, err := io.WriteString(w, b.String())
+	return err
 }
 
 func endpoint(a dnsaid.AgentRecord) string {

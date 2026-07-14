@@ -24,7 +24,11 @@ func newDiscoverCmd() *cobra.Command {
 
 Individual agent failures do not fail the command: they are reported as
 WARN lines on stderr (and in errors[] with --json), and the exit code is 0
-as long as at least one agent was discovered.`,
+as long as at least one agent was discovered.
+
+Environment variables:
+  DNSAID_RESOLVER   DNS server to query as "host:port" (default: system configuration)
+  DNSAID_TIMEOUT    per-query timeout as a Go duration, e.g. "5s" (default: 5s)`,
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := dnsaid.Options{
@@ -57,12 +61,12 @@ as long as at least one agent was discovered.`,
 			for _, e := range res.Errors {
 				fmt.Fprintf(cmd.ErrOrStderr(), "WARN %v\n", e)
 			}
+			write := writeHuman
 			if jsonOut {
-				if err := writeJSON(cmd.OutOrStdout(), domain, res); err != nil {
-					return err
-				}
-			} else {
-				writeHuman(cmd.OutOrStdout(), domain, res)
+				write = writeJSON
+			}
+			if err := write(cmd.OutOrStdout(), domain, res); err != nil {
+				return err
 			}
 
 			// Exit code 0 requires at least one discovered agent
