@@ -38,6 +38,11 @@ as long as at least one agent was discovered.`,
 				if err != nil {
 					return fmt.Errorf("invalid DNSAID_TIMEOUT %q: %w", v, err)
 				}
+				// A non-positive timeout would expire every query
+				// immediately and misdiagnose as a missing index.
+				if d <= 0 {
+					return fmt.Errorf("invalid DNSAID_TIMEOUT %q: must be positive", v)
+				}
 				opts.Timeout = d
 			}
 

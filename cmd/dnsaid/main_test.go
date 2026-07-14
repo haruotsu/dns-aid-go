@@ -32,6 +32,9 @@ func startZone(t *testing.T, zoneName string, opts ...resolvertest.Option) {
 	}
 	t.Cleanup(func() { _ = srv.Close() })
 	t.Setenv("DNSAID_RESOLVER", srv.Addr)
+	// A DNSAID_TIMEOUT leaking in from the developer's environment must not
+	// change test behavior; empty means "use the default".
+	t.Setenv("DNSAID_TIMEOUT", "")
 }
 
 // runCLI executes the CLI in-process and captures its output.
@@ -212,16 +215,46 @@ func TestDiscoverRequireDNSSECWithAD(t *testing.T) {
 }
 
 func TestDiscoverInvalidTimeoutFails(t *testing.T) {
-	startZone(t, "zone_full")
-	t.Setenv("DNSAID_TIMEOUT", "not-a-duration")
+	for _, timeout := range []string{"not-a-duration", "-5s", "0s"} {
+		t.Run(timeout, func(t *testing.T) {
+			startZone(t, "zone_full")
+			t.Setenv("DNSAID_TIMEOUT", timeout)
 
-	_, stderr, code := runCLI("discover", "example.com")
+			_, stderr, code := runCLI("discover", "example.com")
 
-	if code != 1 {
-		t.Errorf("exit code = %d, want 1", code)
+			if code != 1 {
+				t.Errorf("exit code = %d, want 1", code)
+			}
+			if !strings.Contains(stderr, "DNSAID_TIMEOUT") {
+				t.Errorf("stderr should name DNSAID_TIMEOUT, got:\n%s", stderr)
+			}
+		})
 	}
-	if !strings.Contains(stderr, "DNSAID_TIMEOUT") {
-		t.Errorf("stderr should name DNSAID_TIMEOUT, got:\n%s", stderr)
+}
+
+func TestDiscoverProtocolWithoutMatchSucceedsEmpty(t *testing.T) {
+	startZone(t, "zone_full")
+
+	stdout, stderr, code := runCLI("discover", "example.com", "--protocol", "nomatch")
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0 (no match is not a failure, stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "FOUND 0 agents") {
+		t.Errorf("stdout should report zero agents, got:\n%s", stdout)
+	}
+}
+
+func TestDiscoverIndexNotFoundJSONKeepsStdoutEmpty(t *testing.T) {
+	startZone(t, "zone_full")
+
+	stdout, _, code := runCLI("discover", "other.example", "--json")
+
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if stdout != "" {
+		t.Errorf("stdout must stay empty on failure so JSON consumers never parse a partial document, got:\n%s", stdout)
 	}
 }
 
