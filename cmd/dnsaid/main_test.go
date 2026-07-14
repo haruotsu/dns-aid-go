@@ -246,6 +246,22 @@ func TestDiscoverProtocolWithoutMatchSucceedsEmpty(t *testing.T) {
 	}
 }
 
+func TestDiscoverEmptyResultJSONKeepsArraysNonNull(t *testing.T) {
+	startZone(t, "zone_full")
+
+	stdout, _, code := runCLI("discover", "example.com", "--protocol", "nomatch", "--json")
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(stdout, "\"agents\": []") {
+		t.Errorf("agents must be an empty array, never null, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "\"errors\": []") {
+		t.Errorf("errors must be an empty array, never null, got:\n%s", stdout)
+	}
+}
+
 func TestDiscoverIndexNotFoundJSONKeepsStdoutEmpty(t *testing.T) {
 	startZone(t, "zone_full")
 
