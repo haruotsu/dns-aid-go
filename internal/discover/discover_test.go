@@ -100,10 +100,14 @@ func TestDiscoverZoneFullConnectionFields(t *testing.T) {
 	if support.Port != 8443 {
 		t.Errorf("support.Port = %d, want 8443", support.Port)
 	}
-	// Protocol is derived from the first ALPN (OSS-03 §3.1), which may
-	// differ from the protocol advertised in the index.
-	if support.Protocol != "h2" {
-		t.Errorf("support.Protocol = %q, want %q", support.Protocol, "h2")
+	// Protocol is the protocol advertised in the index, not the record's
+	// ALPN ("h2" here): the reference implementation reports the index
+	// protocol, and interop (R-CORE-2) makes that the tie-breaker.
+	if support.Protocol != "https" {
+		t.Errorf("support.Protocol = %q, want %q", support.Protocol, "https")
+	}
+	if !slices.Equal(support.ALPN, []string{"h2"}) {
+		t.Errorf("support.ALPN = %v, want [h2]", support.ALPN)
 	}
 }
 
@@ -119,7 +123,7 @@ func TestDiscoverCustomSVCBParams(t *testing.T) {
 	want := discover.AgentRecord{
 		CapURI:    "https://mcp.example.com/.well-known/agent-cap.json",
 		CapSHA256: "U0_t8vmbVaTHEXJ3PlnaJNSNvNnfhwOcTZ3WUfJOkbg",
-		BAP:       "mcp/1,a2a/1",
+		BAP:       "mcp=1.0",
 		Policy:    "https://example.com/agent-policy",
 		Realm:     "production",
 		Sig:       "c2lnLXBsYWNlaG9sZGVy",

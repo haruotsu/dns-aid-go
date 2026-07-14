@@ -156,10 +156,13 @@ func TestZoneCustomParamsCarriesAllDraftKeys(t *testing.T) {
 	want := record.SVCBParams{
 		Cap:       "https://mcp.example.com/.well-known/agent-cap.json",
 		CapSHA256: capDocDigest(t),
-		BAP:       "mcp/1,a2a/1",
-		Policy:    "https://example.com/agent-policy",
-		Realm:     "production",
-		Sig:       "c2lnLXBsYWNlaG9sZGVy",
+		// The reference implementation only accepts a single
+		// "<protocol>[=<version>]" token here; a value it rejects would
+		// make it drop the whole agent and break the interop comparison.
+		BAP:    "mcp=1.0",
+		Policy: "https://example.com/agent-policy",
+		Realm:  "production",
+		Sig:    "c2lnLXBsYWNlaG9sZGVy",
 	}
 	if params.Cap != want.Cap {
 		t.Errorf("cap = %q, want %q", params.Cap, want.Cap)

@@ -69,7 +69,7 @@ type AgentRecord struct {
 	FQDN   string // Name + "." + Domain
 
 	// Connection (from SVCB)
-	Protocol string // derived from the first ALPN
+	Protocol string // protocol advertised in the index entry
 	Endpoint string // SVCB TargetName
 	Port     uint16 // default 443
 	ALPN     []string
@@ -103,13 +103,11 @@ type Result struct {
 
 // Options filters and hardens a Discover call (R-DISC-6).
 type Options struct {
-	// Protocol keeps only the index entries advertising this protocol.
-	// It matches the protocol named in the domain index entry, not the
-	// ALPN-derived AgentRecord.Protocol, which may differ (e.g. "https"
-	// in the index vs "h2" from the record's ALPN). Alignment with the
-	// reference implementation will be revisited in interop testing
-	// (PR-10, R-CORE-2). Empty means no filter. The comparison is
-	// case-insensitive.
+	// Protocol keeps only the index entries advertising this protocol,
+	// which is also what AgentRecord.Protocol reports (the record's ALPN
+	// may differ, e.g. "https" in the index vs "h2" ALPN, and is exposed
+	// separately). This matches the reference implementation (R-CORE-2).
+	// Empty means no filter. The comparison is case-insensitive.
 	Protocol string
 
 	// Name looks up a single agent by its index name. When it is not in
@@ -252,21 +250,15 @@ func queryAgent(ctx context.Context, r resolver.Resolver, e record.IndexEntry, f
 			rec.Port = v.Port
 		}
 	}
-	// ALPN values come straight from DNS and override the agent's
-	// Protocol; a control character here could inject terminal escapes
-	// into CLI output, and an empty or non-printable value makes the
-	// endpoint identity suspect, so the agent is rejected.
+	// ALPN values come straight from DNS and flow into CLI output; a
+	// control character here could inject terminal escapes, and an empty
+	// or non-printable value makes the endpoint identity suspect, so the
+	// agent is rejected.
 	for _, alpn := range rec.ALPN {
 		if !isVisibleASCII(alpn) {
 			return AgentRecord{}, fmt.Errorf("agent %s: SVCB alpn value %q is not printable ASCII", fqdn, alpn)
 		}
 	}
-	// Protocol is derived from the first ALPN (OSS-03 §3.1); the index
-	// protocol is only a fallback when the record has no ALPN.
-	if len(rec.ALPN) > 0 {
-		rec.Protocol = rec.ALPN[0]
-	}
-
 	params, err := record.ParseSVCBParams(svcb.Value)
 	if err != nil {
 		return AgentRecord{}, fmt.Errorf("agent %s: %w", fqdn, err)

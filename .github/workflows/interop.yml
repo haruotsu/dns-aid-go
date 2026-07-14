@@ -1,0 +1,78 @@
+name: interop
+
+# Interoperability proof against the Python reference implementation
+# (R-CORE-2, N-1): both CLIs discover the same fixture zones served by an
+# in-process DNS server, and the normalized results must match. The weekly
+# run re-validates against the latest reference release to catch drift and
+# files an issue when it fails.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1" # Mondays 03:17 UTC — weekly reference re-validation
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          # The scheduled run installs an unpinned reference release
+          # before any Go step; keep it away from the shared module
+          # cache so a compromised release cannot poison the cache that
+          # push/PR (and release) builds restore.
+          cache: ${{ github.event_name != 'schedule' }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install the reference implementation
+        # Scheduled runs install the latest release to detect spec drift
+        # early; push/PR runs use the pinned version so a reference release
+        # can never break unrelated PRs.
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            pip install "dns-aid[cli]"
+          else
+            pip install -r internal/interop/requirements.txt
+          fi
+          pip show dns-aid
+      - name: Compare discover results with the reference implementation
+        run: go test -tags interop -v ./internal/interop/
+
+  file-issue:
+    needs: interop
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: File an issue unless one is already open
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create interop-failure \
+            --repo "$GITHUB_REPOSITORY" \
+            --description "Weekly interop check against the reference implementation failed" \
+            --color B60205 --force
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+            --label interop-failure --state open --json number --jq length)
+          if [ "$open" -eq 0 ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "Weekly interop check against the latest reference implementation failed" \
+              --label interop-failure \
+              --body "The scheduled interop workflow failed against the latest released reference implementation, which usually means the reference (or the draft) changed behavior. See the failing run: $RUN_URL"
+          else
+            echo "An interop-failure issue is already open; not filing another."
+          fi

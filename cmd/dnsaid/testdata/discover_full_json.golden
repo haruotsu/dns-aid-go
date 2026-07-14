@@ -59,7 +59,7 @@
       "name": "support",
       "domain": "example.com",
       "fqdn": "support.example.com",
-      "protocol": "h2",
+      "protocol": "https",
       "endpoint": "support.example.com",
       "port": 8443,
       "alpn": [

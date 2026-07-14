@@ -28,6 +28,9 @@ profile.cov
 go.work
 go.work.sum
 
+# Python bytecode (interop harness sitecustomize)
+__pycache__/
+
 # env file
 .env
 
