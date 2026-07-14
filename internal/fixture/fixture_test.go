@@ -208,7 +208,7 @@ func zoneFiles(t *testing.T) []string {
 }
 
 // Fixtures must not reference real domains or organizations: every owner
-// name, SVCB target and URI host has to stay within example.com (N-8).
+// name, SVCB target and URI host has to stay within example.com (N-7, N-8).
 func TestFixturesUseOnlyExampleDomains(t *testing.T) {
 	uriHost := regexp.MustCompile(`https?://([^/"\s]+)`)
 
@@ -252,6 +252,12 @@ func TestZoneIndexesParse(t *testing.T) {
 			addr := serveZone(t, name)
 
 			r := exchange(t, addr, "_index._agents.example.com.", dns.TypeTXT)
+			if r.Rcode != dns.RcodeSuccess {
+				t.Fatalf("Rcode = %s, want NOERROR", dns.RcodeToString[r.Rcode])
+			}
+			if len(r.Answer) != 1 {
+				t.Fatalf("len(Answer) = %d, want 1", len(r.Answer))
+			}
 			txt, ok := r.Answer[0].(*dns.TXT)
 			if !ok {
 				t.Fatalf("Answer[0] = %T, want *dns.TXT", r.Answer[0])
@@ -276,6 +282,20 @@ func TestZoneUnknownNameFails(t *testing.T) {
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("err = %v, want a wrapped fs.ErrNotExist", err)
+	}
+}
+
+// Fixture names must stay inside the testdata directory: path traversal
+// ("../go.mod") and absolute paths must be rejected instead of reading
+// arbitrary files.
+func TestReadRejectsNonLocalPath(t *testing.T) {
+	for _, name := range []string{"../go.mod", "/etc/hosts"} {
+		if _, err := fixture.Read(name); err == nil {
+			t.Errorf("Read(%q): err = nil, want error for non-local path", name)
+		}
+	}
+	if _, err := fixture.Zone("../fixture/fixture"); err == nil {
+		t.Error(`Zone("../fixture/fixture"): err = nil, want error for non-local path`)
 	}
 }
 

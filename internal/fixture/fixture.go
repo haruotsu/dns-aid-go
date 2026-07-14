@@ -26,7 +26,12 @@ func Dir() (string, error) {
 }
 
 // Read returns the contents of the named file in the testdata directory.
+// The name must be a local path (no absolute paths or ".." traversal) so it
+// cannot escape testdata.
 func Read(filename string) ([]byte, error) {
+	if !filepath.IsLocal(filename) {
+		return nil, fmt.Errorf("fixture name %q must be a local path inside testdata", filename)
+	}
 	dir, err := Dir()
 	if err != nil {
 		return nil, err
