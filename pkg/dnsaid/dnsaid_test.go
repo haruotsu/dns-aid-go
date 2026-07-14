@@ -2,8 +2,10 @@ package dnsaid_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/haruotsu/dns-aid-go/internal/fixture"
 	"github.com/haruotsu/dns-aid-go/internal/resolver/resolvertest"
@@ -108,5 +110,103 @@ func TestDiscoverCapabilityTXTFallback(t *testing.T) {
 	if billing.CapabilitySource != dnsaid.CapabilitySourceTXTFallback {
 		t.Errorf("billing.CapabilitySource = %q, want %q",
 			billing.CapabilitySource, dnsaid.CapabilitySourceTXTFallback)
+	}
+}
+
+func TestDiscoverNameFilter(t *testing.T) {
+	addr := newFixtureServer(t, "zone_full")
+
+	res, err := dnsaid.Discover(context.Background(), "example.com",
+		dnsaid.Options{Resolver: addr, Name: "billing"})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(res.Agents) != 1 || res.Agents[0].Name != "billing" {
+		t.Fatalf("Agents = %v, want exactly [billing]", res.Agents)
+	}
+}
+
+func TestDiscoverNameNotFound(t *testing.T) {
+	addr := newFixtureServer(t, "zone_full")
+
+	_, err := dnsaid.Discover(context.Background(), "example.com",
+		dnsaid.Options{Resolver: addr, Name: "nonexistent"})
+	if !errors.Is(err, dnsaid.ErrAgentNotFound) {
+		t.Fatalf("err = %v, want ErrAgentNotFound", err)
+	}
+}
+
+func TestDiscoverIndexNotFound(t *testing.T) {
+	addr := newFixtureServer(t, "zone_full")
+
+	_, err := dnsaid.Discover(context.Background(), "other.example",
+		dnsaid.Options{Resolver: addr})
+	if !errors.Is(err, dnsaid.ErrIndexNotFound) {
+		t.Fatalf("err = %v, want ErrIndexNotFound", err)
+	}
+}
+
+func TestDiscoverProtocolFilter(t *testing.T) {
+	addr := newFixtureServer(t, "zone_full")
+
+	res, err := dnsaid.Discover(context.Background(), "example.com",
+		dnsaid.Options{Resolver: addr, Protocol: "a2a"})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(res.Agents) != 1 || res.Agents[0].Name != "billing" {
+		t.Fatalf("Agents = %v, want exactly [billing]", res.Agents)
+	}
+}
+
+func TestDiscoverRequireDNSSECWithoutAD(t *testing.T) {
+	addr := newFixtureServer(t, "zone_full") // server does not set AD
+
+	_, err := dnsaid.Discover(context.Background(), "example.com",
+		dnsaid.Options{Resolver: addr, RequireDNSSEC: true})
+	if !errors.Is(err, dnsaid.ErrDNSSECRequired) {
+		t.Fatalf("err = %v, want ErrDNSSECRequired", err)
+	}
+}
+
+func TestDiscoverRequireDNSSECWithAD(t *testing.T) {
+	addr := newFixtureServer(t, "zone_full", resolvertest.WithAD())
+
+	res, err := dnsaid.Discover(context.Background(), "example.com",
+		dnsaid.Options{Resolver: addr, RequireDNSSEC: true})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	for _, a := range res.Agents {
+		if !a.DNSSECValidated {
+			t.Errorf("agent %s: DNSSECValidated = false, want true", a.Name)
+		}
+	}
+}
+
+func TestDiscoverPartialSuccess(t *testing.T) {
+	addr := newFixtureServer(t, "zone_partial")
+
+	res, err := dnsaid.Discover(context.Background(), "example.com",
+		dnsaid.Options{Resolver: addr})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(res.Agents) != 1 || res.Agents[0].Name != "chat" {
+		t.Fatalf("Agents = %v, want exactly [chat]", res.Agents)
+	}
+	// legacy (NODATA) and ghost (NXDOMAIN) fail individually (R-DISC-5).
+	if len(res.Errors) != 2 {
+		t.Fatalf("len(Errors) = %d, want 2: %v", len(res.Errors), res.Errors)
+	}
+}
+
+func TestDiscoverUnreachableResolver(t *testing.T) {
+	// A reserved-for-documentation address (RFC 5737) that nothing answers
+	// on; the short timeout keeps the failure fast.
+	_, err := dnsaid.Discover(context.Background(), "example.com",
+		dnsaid.Options{Resolver: "192.0.2.1:53", Timeout: 50 * time.Millisecond})
+	if err == nil {
+		t.Fatal("Discover with unreachable resolver: err = nil, want error")
 	}
 }
