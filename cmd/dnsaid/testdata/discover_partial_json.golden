@@ -1,0 +1,41 @@
+{
+  "domain": "example.com",
+  "index": [
+    {
+      "name": "chat",
+      "protocol": "mcp"
+    },
+    {
+      "name": "legacy",
+      "protocol": "a2a"
+    },
+    {
+      "name": "ghost",
+      "protocol": "https"
+    }
+  ],
+  "agents": [
+    {
+      "name": "chat",
+      "domain": "example.com",
+      "fqdn": "chat.example.com",
+      "protocol": "mcp",
+      "endpoint": "chat.example.com",
+      "port": 443,
+      "alpn": [
+        "mcp"
+      ],
+      "capabilities": [
+        "chat"
+      ],
+      "version": "1.0.0",
+      "endpoint_source": "dns_svcb",
+      "capability_source": "txt_fallback",
+      "dnssec_validated": false
+    }
+  ],
+  "errors": [
+    "agent legacy.example.com: no matching DNS records: SVCB legacy.example.com",
+    "agent ghost.example.com: no matching DNS records: SVCB ghost.example.com: NXDOMAIN"
+  ]
+}

@@ -1,0 +1,4 @@
+FOUND 1 agent at example.com  (index: dns_txt)
+
+  chat.example.com  mcp  →  chat.example.com:443  [dnssec:unvalidated]
+    capabilities: chat  (source: txt_fallback)
