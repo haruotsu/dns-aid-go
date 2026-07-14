@@ -1,0 +1,195 @@
+// Package discover implements the read-side discovery flow of
+// draft-mozleywilliams-dnsop-dnsaid (OSS-03 §4.1): resolve the domain index,
+// query each agent's SVCB record, resolve capabilities, and assemble a
+// partial-success Result (R-DISC-1..5, 7).
+package discover
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/miekg/dns"
+
+	"github.com/haruotsu/dns-aid-go/internal/record"
+	"github.com/haruotsu/dns-aid-go/internal/resolver"
+)
+
+// ErrIndexNotFound reports that the domain index TXT record could not be
+// resolved or parsed (OSS-03 §6.2).
+var ErrIndexNotFound = errors.New("agent index not found")
+
+// indexLabel is the owner-name prefix of the domain index TXT record
+// (R-DISC-1).
+const indexLabel = "_index._agents."
+
+// EndpointSource values report how an agent's endpoint was resolved
+// (R-DISC-7).
+const (
+	EndpointSourceDNSSVCB = "dns_svcb"
+)
+
+// AgentRecord is the normalized representation of one discovered agent
+// (OSS-03 §3.1).
+type AgentRecord struct {
+	Name   string // agent label from the index (e.g. "chat")
+	Domain string // queried domain (e.g. "example.com")
+	FQDN   string // Name + "." + Domain
+
+	// Connection (from SVCB)
+	Protocol string // derived from the first ALPN
+	Endpoint string // SVCB TargetName
+	Port     uint16 // default 443
+	ALPN     []string
+
+	// Capabilities (from cap document or TXT)
+	Capabilities []string
+	Version      string
+
+	// SVCB custom parameters (draft)
+	CapURI, CapSHA256, BAP, Policy, Realm, Sig string
+
+	// Resolution transparency (R-DISC-7)
+	EndpointSource   string
+	CapabilitySource string
+
+	// Verification
+	DNSSECValidated bool
+}
+
+// Result is the outcome of one Discover call. Agents and Errors are
+// independent: individual agent failures are collected in Errors while the
+// remaining agents are still returned (partial success, R-DISC-5).
+type Result struct {
+	// Index holds the parsed domain index entries, including those that
+	// did not yield an agent.
+	Index []record.IndexEntry
+
+	Agents []AgentRecord
+	Errors []error
+}
+
+// Options filters and hardens a Discover call.
+type Options struct{}
+
+// Discover resolves the agents advertised by domain (OSS-03 §4.1).
+func Discover(ctx context.Context, r resolver.Resolver, domain string, opts Options) (Result, error) {
+	domain = strings.TrimSuffix(domain, ".")
+
+	entries, err := lookupIndex(ctx, r, domain)
+	if err != nil {
+		return Result{}, err
+	}
+
+	res := Result{Index: entries}
+	for _, e := range entries {
+		fqdn := e.Name + "." + domain
+		rec, err := queryAgent(ctx, r, e, fqdn)
+		if err != nil {
+			res.Errors = append(res.Errors, err)
+			continue
+		}
+		rec.Domain = domain
+		res.Agents = append(res.Agents, rec)
+	}
+	return res, nil
+}
+
+// lookupIndex resolves and parses the domain index TXT record (R-DISC-1).
+// Any failure maps to ErrIndexNotFound (OSS-03 §6.2).
+func lookupIndex(ctx context.Context, r resolver.Resolver, domain string) ([]record.IndexEntry, error) {
+	resp, err := r.LookupTXT(ctx, indexLabel+domain)
+	if err != nil {
+		return nil, fmt.Errorf("%w at %s%s: %v", ErrIndexNotFound, indexLabel, domain, err)
+	}
+
+	// The index is one TXT record, but unrelated TXT records may share the
+	// name: parse each record (character-strings concatenated, RFC 1035)
+	// and use the first that is a well-formed index.
+	var lastErr error
+	for _, txt := range resp.Records {
+		entries, err := record.ParseIndexTXT(txt...)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return entries, nil
+	}
+	return nil, fmt.Errorf("%w at %s%s: %v", ErrIndexNotFound, indexLabel, domain, lastErr)
+}
+
+// queryAgent resolves one index entry into an AgentRecord via its SVCB
+// record (R-DISC-2).
+func queryAgent(ctx context.Context, r resolver.Resolver, e record.IndexEntry, fqdn string) (AgentRecord, error) {
+	resp, err := r.QuerySVCB(ctx, fqdn)
+	if err != nil {
+		return AgentRecord{}, fmt.Errorf("agent %s: %w", fqdn, err)
+	}
+
+	svcb, err := selectSVCB(resp.Records)
+	if err != nil {
+		return AgentRecord{}, fmt.Errorf("agent %s: %w", fqdn, err)
+	}
+
+	rec := AgentRecord{
+		Name:            e.Name,
+		FQDN:            fqdn,
+		Protocol:        e.Protocol,
+		Endpoint:        strings.TrimSuffix(svcb.Target, "."),
+		Port:            443,
+		EndpointSource:  EndpointSourceDNSSVCB,
+		DNSSECValidated: resp.AD,
+	}
+	// A TargetName of "." in ServiceMode means the owner name itself
+	// (RFC 9460 §2.5).
+	if rec.Endpoint == "" {
+		rec.Endpoint = fqdn
+	}
+
+	for _, kv := range svcb.Value {
+		switch v := kv.(type) {
+		case *dns.SVCBAlpn:
+			rec.ALPN = v.Alpn
+		case *dns.SVCBPort:
+			rec.Port = v.Port
+		}
+	}
+	// Protocol is derived from the first ALPN (OSS-03 §3.1); the index
+	// protocol is only a fallback when the record has no ALPN.
+	if len(rec.ALPN) > 0 {
+		rec.Protocol = rec.ALPN[0]
+	}
+
+	params, err := record.ParseSVCBParams(svcb.Value)
+	if err != nil {
+		return AgentRecord{}, fmt.Errorf("agent %s: %w", fqdn, err)
+	}
+	rec.CapURI = params.Cap
+	rec.CapSHA256 = params.CapSHA256
+	rec.BAP = params.BAP
+	rec.Policy = params.Policy
+	rec.Realm = params.Realm
+	rec.Sig = params.Sig
+
+	return rec, nil
+}
+
+// selectSVCB picks the preferred record from an SVCB RRset: the lowest
+// SvcPriority among ServiceMode records (RFC 9460 §2.4.1). AliasMode
+// records (SvcPriority 0) are not followed.
+func selectSVCB(records []*dns.SVCB) (*dns.SVCB, error) {
+	var best *dns.SVCB
+	for _, svcb := range records {
+		if svcb.Priority == 0 {
+			continue
+		}
+		if best == nil || svcb.Priority < best.Priority {
+			best = svcb
+		}
+	}
+	if best == nil {
+		return nil, fmt.Errorf("no ServiceMode SVCB record (AliasMode is not supported)")
+	}
+	return best, nil
+}
