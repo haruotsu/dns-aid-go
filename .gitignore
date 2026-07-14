@@ -4,13 +4,13 @@
 # Binaries for programs and plugins
 /dnsaid
 *.exe
-
-# goreleaser output
-/dist/
 *.exe~
 *.dll
 *.so
 *.dylib
+
+# goreleaser output
+/dist/
 
 # Test binary, built with `go test -c`
 *.test

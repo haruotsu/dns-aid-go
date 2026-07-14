@@ -16,8 +16,10 @@ func TestVersionIsSemVer(t *testing.T) {
 	}
 }
 
+// N-6 requires the conformant draft revision (not just the draft name) to be
+// identifiable from a release, so DraftVersion must carry the -NN suffix.
 func TestDraftVersion(t *testing.T) {
-	const want = "draft-mozleywilliams-dnsop-dnsaid"
+	const want = "draft-mozleywilliams-dnsop-dnsaid-02"
 	if DraftVersion != want {
 		t.Errorf("DraftVersion = %q, want %q", DraftVersion, want)
 	}

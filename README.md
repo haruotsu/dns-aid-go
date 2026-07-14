@@ -102,7 +102,7 @@ for the full API.
 
 ## Conformance
 
-This implementation conforms to the IETF draft
+This implementation conforms to revision `-02` of the IETF draft
 [`draft-mozleywilliams-dnsop-dnsaid`](https://datatracker.ietf.org/doc/draft-mozleywilliams-dnsop-dnsaid/).
 
 The specification is the source of truth; the Python reference implementation is
