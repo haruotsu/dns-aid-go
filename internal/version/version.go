@@ -10,7 +10,7 @@ import "fmt"
 
 // Version is the current release version as a bare SemVer core (no leading
 // "v"). tagpr rewrites this constant; treat it as the single source of truth.
-const Version = "0.0.0"
+const Version = "0.1.0"
 
 // DraftVersion is the IETF draft revision this implementation conforms to.
 // Bump the -NN suffix when adopting a new draft revision and record the
