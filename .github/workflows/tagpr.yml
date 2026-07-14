@@ -5,6 +5,12 @@ on:
     branches:
       - main
 
+# Serialize release runs: concurrent pushes to main must not race on tag
+# creation and release-asset uploads.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   tagpr:
     runs-on: ubuntu-latest
@@ -36,6 +42,9 @@ jobs:
       - uses: goreleaser/goreleaser-action@v6
         if: steps.tagpr.outputs.tag != ''
         with:
+          # Keep the same major as .goreleaser.yaml's `version: 2` schema so a
+          # future goreleaser major bump cannot break the release job.
+          version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

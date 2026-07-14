@@ -40,6 +40,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: goreleaser/goreleaser-action@v6
         with:
+          # Same major as the release job in tagpr.yml, so check validates
+          # against the goreleaser that will actually run the release.
+          version: "~> v2"
           args: check
 
   lint:

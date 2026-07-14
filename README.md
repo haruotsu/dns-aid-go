@@ -45,11 +45,11 @@ dnsaid discover example.com
 ```
 FOUND 3 agents at example.com  (index: dns_txt)
 
-  chat.example.com     mcp  →  chat.example.com:443      [dnssec:validated]
+  chat.example.com     mcp  →  chat.example.com:443      [dnssec:ok]
     capabilities: chat, assistant     (source: txt_fallback)
-  billing.example.com  a2a  →  billing.example.com:443   [dnssec:validated]
+  billing.example.com  a2a  →  billing.example.com:443   [dnssec:ok]
     capabilities: billing, invoicing  (source: txt_fallback)
-  support.example.com  h2   →  support.example.com:8443  [dnssec:validated]
+  support.example.com  h2   →  support.example.com:8443  [dnssec:ok]
     capabilities: support             (source: txt_fallback)
 ```
 
