@@ -12,9 +12,10 @@ import "fmt"
 // "v"). tagpr rewrites this constant; treat it as the single source of truth.
 const Version = "0.0.0"
 
-// DraftVersion is the IETF draft this implementation conforms to. Record any
-// change here in the release notes when the draft is revised (requirement N-6).
-const DraftVersion = "draft-mozleywilliams-dnsop-dnsaid"
+// DraftVersion is the IETF draft revision this implementation conforms to.
+// Bump the -NN suffix when adopting a new draft revision and record the
+// change in the release notes (requirement N-6).
+const DraftVersion = "draft-mozleywilliams-dnsop-dnsaid-02"
 
 // String returns a human-readable version line including the conformant draft,
 // suitable for the `dnsaid version` command.

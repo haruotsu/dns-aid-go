@@ -5,6 +5,12 @@ on:
     branches:
       - main
 
+# Serialize release runs: concurrent pushes to main must not race on tag
+# creation and release-asset uploads.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   tagpr:
     runs-on: ubuntu-latest
@@ -18,7 +24,30 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # goreleaser refuses to run against a shallow clone.
+          fetch-depth: 0
       - id: tagpr
         uses: Songmu/tagpr@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Tags created with GITHUB_TOKEN never trigger other workflows, so
+      # goreleaser must run here, in the same job, right after tagpr tags
+      # (guarded by outputs.tag, which is empty on non-release pushes).
+      - uses: actions/setup-go@v5
+        if: steps.tagpr.outputs.tag != ''
+        with:
+          go-version: stable
+          # Release binaries are built cold: the Actions build cache is not
+          # integrity-checked, so a poisoned cache could leak into published
+          # artifacts (CWE-349).
+          cache: false
+      - uses: goreleaser/goreleaser-action@v6
+        if: steps.tagpr.outputs.tag != ''
+        with:
+          # Keep the same major as .goreleaser.yaml's `version: 2` schema so a
+          # future goreleaser major bump cannot break the release job.
+          version: "~> v2"
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

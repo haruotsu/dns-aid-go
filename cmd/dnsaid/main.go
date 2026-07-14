@@ -48,6 +48,7 @@ func newRootCmd() *cobra.Command {
 		return &usageError{cmd: cmd, err: err}
 	})
 	root.AddCommand(newDiscoverCmd())
+	root.AddCommand(newVersionCmd())
 	return root
 }
 

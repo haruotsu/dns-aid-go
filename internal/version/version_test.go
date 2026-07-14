@@ -16,10 +16,15 @@ func TestVersionIsSemVer(t *testing.T) {
 	}
 }
 
-func TestDraftVersion(t *testing.T) {
-	const want = "draft-mozleywilliams-dnsop-dnsaid"
-	if DraftVersion != want {
-		t.Errorf("DraftVersion = %q, want %q", DraftVersion, want)
+// N-6 requires the conformant draft revision (not just the draft name) to be
+// identifiable from a release, so DraftVersion must carry the -NN suffix.
+// The revision digits themselves are not asserted: bumping them is exactly
+// the change this constant exists for.
+var draftPattern = regexp.MustCompile(`^draft-mozleywilliams-dnsop-dnsaid-\d{2}$`)
+
+func TestDraftVersionCarriesRevision(t *testing.T) {
+	if !draftPattern.MatchString(DraftVersion) {
+		t.Errorf("DraftVersion = %q, want the draft name with a -NN revision suffix", DraftVersion)
 	}
 }
 
