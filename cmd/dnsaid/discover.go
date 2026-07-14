@@ -59,7 +59,7 @@ Environment variables:
 			// Partial failures go to stderr so stdout stays parseable
 			// (OSS-03 §6.2).
 			for _, e := range res.Errors {
-				fmt.Fprintf(cmd.ErrOrStderr(), "WARN %v\n", e)
+				fmt.Fprintf(cmd.ErrOrStderr(), "WARN %v\n", e) //nolint:errcheck // best-effort diagnostics; nothing to do when stderr is gone
 			}
 			write := writeHuman
 			if jsonOut {

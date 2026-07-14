@@ -25,9 +25,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	root.SetErr(stderr)
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
+		fmt.Fprintf(stderr, "Error: %v\n", err) //nolint:errcheck // best-effort diagnostics; nothing to do when stderr is gone
 		if uerr, ok := errors.AsType[*usageError](err); ok {
-			fmt.Fprintf(stderr, "\n%s", uerr.cmd.UsageString())
+			fmt.Fprintf(stderr, "\n%s", uerr.cmd.UsageString()) //nolint:errcheck // best-effort diagnostics
 		}
 		return exitCode(err)
 	}
