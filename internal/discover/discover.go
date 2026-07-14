@@ -16,9 +16,20 @@ import (
 	"github.com/haruotsu/dns-aid-go/internal/resolver"
 )
 
-// ErrIndexNotFound reports that the domain index TXT record could not be
-// resolved or parsed (OSS-03 §6.2).
-var ErrIndexNotFound = errors.New("agent index not found")
+// Sentinel errors of the discover flow (OSS-03 §6.2).
+var (
+	// ErrIndexNotFound reports that the domain index TXT record could not
+	// be resolved or parsed.
+	ErrIndexNotFound = errors.New("agent index not found")
+
+	// ErrAgentNotFound reports that the agent named in Options.Name is
+	// not in the index or has no SVCB record.
+	ErrAgentNotFound = errors.New("agent not found")
+
+	// ErrDNSSECRequired reports that Options.RequireDNSSEC is set but a
+	// response came back without the AD flag.
+	ErrDNSSECRequired = errors.New("DNSSEC validation required but response is not authenticated")
+)
 
 // indexLabel is the owner-name prefix of the domain index TXT record
 // (R-DISC-1).
@@ -79,22 +90,41 @@ type Result struct {
 	Errors []error
 }
 
-// Options filters and hardens a Discover call.
-type Options struct{}
+// Options filters and hardens a Discover call (R-DISC-6).
+type Options struct {
+	// Protocol keeps only the index entries advertising this protocol.
+	// Empty means no filter. The comparison is case-insensitive.
+	Protocol string
+
+	// Name looks up a single agent by its index name. When it is not in
+	// the index or has no SVCB record, Discover returns ErrAgentNotFound.
+	// Empty means no filter. The comparison is case-insensitive
+	// (RFC 4343).
+	Name string
+
+	// RequireDNSSEC rejects responses without the AD flag: an
+	// unvalidated index fails the whole call with ErrDNSSECRequired, an
+	// unvalidated agent record is dropped with the error recorded in
+	// Result.Errors.
+	RequireDNSSEC bool
+}
 
 // Discover resolves the agents advertised by domain (OSS-03 §4.1).
 func Discover(ctx context.Context, r resolver.Resolver, domain string, opts Options) (Result, error) {
 	domain = strings.TrimSuffix(domain, ".")
 
-	entries, err := lookupIndex(ctx, r, domain)
+	entries, err := lookupIndex(ctx, r, domain, opts)
 	if err != nil {
 		return Result{}, err
 	}
 
 	res := Result{Index: entries}
 	for _, e := range entries {
+		if !matchesFilters(e, opts) {
+			continue
+		}
 		fqdn := e.Name + "." + domain
-		rec, err := queryAgent(ctx, r, e, fqdn)
+		rec, err := queryAgent(ctx, r, e, fqdn, opts)
 		if err != nil {
 			res.Errors = append(res.Errors, err)
 			continue
@@ -103,15 +133,35 @@ func Discover(ctx context.Context, r resolver.Resolver, domain string, opts Opti
 		fillCapabilities(ctx, r, &rec)
 		res.Agents = append(res.Agents, rec)
 	}
+
+	// A lookup naming one agent must yield it (OSS-03 §6.2).
+	if opts.Name != "" && len(res.Agents) == 0 {
+		return res, fmt.Errorf("%w: %s.%s", ErrAgentNotFound, opts.Name, domain)
+	}
 	return res, nil
+}
+
+// matchesFilters reports whether an index entry passes the Name and
+// Protocol filters (R-DISC-6).
+func matchesFilters(e record.IndexEntry, opts Options) bool {
+	if opts.Name != "" && !strings.EqualFold(e.Name, opts.Name) {
+		return false
+	}
+	if opts.Protocol != "" && !strings.EqualFold(e.Protocol, opts.Protocol) {
+		return false
+	}
+	return true
 }
 
 // lookupIndex resolves and parses the domain index TXT record (R-DISC-1).
 // Any failure maps to ErrIndexNotFound (OSS-03 §6.2).
-func lookupIndex(ctx context.Context, r resolver.Resolver, domain string) ([]record.IndexEntry, error) {
+func lookupIndex(ctx context.Context, r resolver.Resolver, domain string, opts Options) ([]record.IndexEntry, error) {
 	resp, err := r.LookupTXT(ctx, indexLabel+domain)
 	if err != nil {
 		return nil, fmt.Errorf("%w at %s%s: %v", ErrIndexNotFound, indexLabel, domain, err)
+	}
+	if opts.RequireDNSSEC && !resp.AD {
+		return nil, fmt.Errorf("%w: index %s%s", ErrDNSSECRequired, indexLabel, domain)
 	}
 
 	// The index is one TXT record, but unrelated TXT records may share the
@@ -131,10 +181,13 @@ func lookupIndex(ctx context.Context, r resolver.Resolver, domain string) ([]rec
 
 // queryAgent resolves one index entry into an AgentRecord via its SVCB
 // record (R-DISC-2).
-func queryAgent(ctx context.Context, r resolver.Resolver, e record.IndexEntry, fqdn string) (AgentRecord, error) {
+func queryAgent(ctx context.Context, r resolver.Resolver, e record.IndexEntry, fqdn string, opts Options) (AgentRecord, error) {
 	resp, err := r.QuerySVCB(ctx, fqdn)
 	if err != nil {
 		return AgentRecord{}, fmt.Errorf("agent %s: %w", fqdn, err)
+	}
+	if opts.RequireDNSSEC && !resp.AD {
+		return AgentRecord{}, fmt.Errorf("%w: agent %s", ErrDNSSECRequired, fqdn)
 	}
 
 	svcb, err := selectSVCB(resp.Records)

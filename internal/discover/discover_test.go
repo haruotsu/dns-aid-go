@@ -330,6 +330,159 @@ func TestDiscoverTrailingDotDomain(t *testing.T) {
 	}
 }
 
+func TestDiscoverDNSSECValidated(t *testing.T) {
+	ctx := context.Background()
+
+	r := newFixtureResolver(t, "zone_full", resolvertest.WithAD())
+	res, err := discover.Discover(ctx, r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if chat := agentByName(t, res.Agents, "chat"); !chat.DNSSECValidated {
+		t.Errorf("chat.DNSSECValidated = false, want true with a validating resolver")
+	}
+
+	r = newFixtureResolver(t, "zone_full")
+	res, err = discover.Discover(ctx, r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if chat := agentByName(t, res.Agents, "chat"); chat.DNSSECValidated {
+		t.Errorf("chat.DNSSECValidated = true, want false without validation")
+	}
+}
+
+func TestDiscoverFilterByName(t *testing.T) {
+	r := newFixtureResolver(t, "zone_full")
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{Name: "billing"})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	if len(res.Agents) != 1 {
+		t.Fatalf("len(Agents) = %d, want 1", len(res.Agents))
+	}
+	agentByName(t, res.Agents, "billing")
+	if len(res.Errors) != 0 {
+		t.Errorf("len(Errors) = %d, want 0: %v", len(res.Errors), res.Errors)
+	}
+}
+
+func TestDiscoverFilterByNameNotInIndex(t *testing.T) {
+	r := newFixtureResolver(t, "zone_full")
+
+	_, err := discover.Discover(context.Background(), r, "example.com", discover.Options{Name: "nonexistent"})
+	if !errors.Is(err, discover.ErrAgentNotFound) {
+		t.Fatalf("Discover error = %v, want ErrAgentNotFound", err)
+	}
+}
+
+func TestDiscoverFilterByNameWithoutSVCB(t *testing.T) {
+	r := newFixtureResolver(t, "zone_partial")
+
+	// legacy is listed in the index but has no SVCB record: a lookup
+	// naming it must fail with ErrAgentNotFound (OSS-03 §6.2).
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{Name: "legacy"})
+	if !errors.Is(err, discover.ErrAgentNotFound) {
+		t.Fatalf("Discover error = %v, want ErrAgentNotFound", err)
+	}
+	if len(res.Errors) != 1 {
+		t.Errorf("len(Errors) = %d, want 1: %v", len(res.Errors), res.Errors)
+	}
+}
+
+func TestDiscoverFilterByProtocol(t *testing.T) {
+	r := newFixtureResolver(t, "zone_full")
+
+	// The protocol filter matches the index entry's advertised protocol,
+	// so support (indexed as https) is selected even though its record's
+	// first ALPN is h2.
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{Protocol: "https"})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	if len(res.Agents) != 1 {
+		t.Fatalf("len(Agents) = %d, want 1", len(res.Agents))
+	}
+	agentByName(t, res.Agents, "support")
+}
+
+func TestDiscoverFilterByProtocolNoMatch(t *testing.T) {
+	r := newFixtureResolver(t, "zone_full")
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{Protocol: "smtp"})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(res.Agents) != 0 {
+		t.Errorf("len(Agents) = %d, want 0", len(res.Agents))
+	}
+}
+
+func TestDiscoverRequireDNSSEC(t *testing.T) {
+	ctx := context.Background()
+	opts := discover.Options{RequireDNSSEC: true}
+
+	// A validating resolver satisfies the requirement.
+	r := newFixtureResolver(t, "zone_full", resolvertest.WithAD())
+	res, err := discover.Discover(ctx, r, "example.com", opts)
+	if err != nil {
+		t.Fatalf("Discover with AD: %v", err)
+	}
+	if len(res.Agents) != 3 {
+		t.Errorf("len(Agents) = %d, want 3", len(res.Agents))
+	}
+
+	// Without the AD flag the whole call fails: the unvalidated index
+	// cannot be trusted (OSS-03 §6.2).
+	r = newFixtureResolver(t, "zone_full")
+	_, err = discover.Discover(ctx, r, "example.com", opts)
+	if !errors.Is(err, discover.ErrDNSSECRequired) {
+		t.Fatalf("Discover without AD: error = %v, want ErrDNSSECRequired", err)
+	}
+}
+
+// adStrippingResolver removes the AD flag from SVCB responses for one FQDN,
+// simulating a zone where a single record fails validation.
+type adStrippingResolver struct {
+	resolver.Resolver
+	fqdn string
+}
+
+func (r adStrippingResolver) QuerySVCB(ctx context.Context, fqdn string) (resolver.SVCBResponse, error) {
+	resp, err := r.Resolver.QuerySVCB(ctx, fqdn)
+	if fqdn == r.fqdn {
+		resp.AD = false
+	}
+	return resp, err
+}
+
+func TestDiscoverRequireDNSSECDropsUnvalidatedAgent(t *testing.T) {
+	r := adStrippingResolver{
+		Resolver: newFixtureResolver(t, "zone_full", resolvertest.WithAD()),
+		fqdn:     "chat.example.com",
+	}
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{RequireDNSSEC: true})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	// Only the unvalidated agent is dropped; the rest still resolve
+	// (partial success, R-DISC-5).
+	if len(res.Agents) != 2 {
+		t.Fatalf("len(Agents) = %d, want 2", len(res.Agents))
+	}
+	if len(res.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1: %v", len(res.Errors), res.Errors)
+	}
+	if !errors.Is(res.Errors[0], discover.ErrDNSSECRequired) {
+		t.Errorf("Errors[0] = %v, want ErrDNSSECRequired", res.Errors[0])
+	}
+}
+
 func TestDiscoverAliasModeOnlyIsError(t *testing.T) {
 	r := newZoneResolver(t, `
 $ORIGIN example.com.
