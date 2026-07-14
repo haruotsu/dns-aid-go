@@ -8,17 +8,18 @@ package main
 // - [x] discover with no arguments fails with usage (exit 1)
 // - [x] discover zone_full prints the human summary (golden, exit 0)
 // - [x] discover zone_full --json prints agents[]+errors[] (golden, exit 0)
-// - [ ] discover zone_partial warns on stderr per failed agent, exit 0
-// - [ ] discover zone_partial --json records errors[] (golden)
-// - [ ] discover zone_index_only finds 0 agents, exit 1
-// - [ ] discover against a zone without an index exits 2 (ErrIndexNotFound)
-// - [ ] discover --name picks a single agent (golden)
-// - [ ] discover --name of an unknown agent exits 3 (ErrAgentNotFound)
-// - [ ] discover --protocol filters the index entries
-// - [ ] discover --require-dnssec without AD exits 4 (ErrDNSSECRequired)
-// - [ ] discover --require-dnssec with AD succeeds and shows dnssec:ok
-// - [ ] invalid DNSAID_TIMEOUT fails with exit 1
-// - [ ] unknown flag fails with usage (exit 1)
+// - [x] discover zone_partial warns on stderr per failed agent, exit 0
+// - [x] discover zone_partial --json records errors[] (golden)
+// - [x] discover zone_index_only finds 0 agents, exit 1
+// - [x] discover against a zone without an index exits 2 (ErrIndexNotFound)
+// - [x] discover --name picks a single agent
+// - [x] discover --name of an unknown agent exits 3 (ErrAgentNotFound)
+// - [x] discover --protocol filters the index entries
+// - [x] discover --require-dnssec without AD exits 4 (ErrDNSSECRequired)
+// - [x] discover --require-dnssec with AD succeeds and shows dnssec:ok
+// - [x] invalid DNSAID_TIMEOUT fails with exit 1
+// - [x] valid DNSAID_TIMEOUT is accepted
+// - [x] unknown flag fails with usage (exit 1)
 
 import (
 	"bytes"
@@ -156,6 +157,110 @@ func TestDiscoverIndexNotFoundExitCode(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "agent index not found") {
 		t.Errorf("stderr should name the missing index, got:\n%s", stderr)
+	}
+}
+
+func TestDiscoverNameSelectsSingleAgent(t *testing.T) {
+	startZone(t, "zone_full")
+
+	stdout, stderr, code := runCLI("discover", "example.com", "--name", "billing")
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "FOUND 1 agent at example.com") {
+		t.Errorf("stdout should report exactly one agent, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "billing.example.com") || strings.Contains(stdout, "chat.example.com") {
+		t.Errorf("stdout should list only billing, got:\n%s", stdout)
+	}
+}
+
+func TestDiscoverNameNotFoundExitCode(t *testing.T) {
+	startZone(t, "zone_full")
+
+	_, stderr, code := runCLI("discover", "example.com", "--name", "nonexistent")
+
+	if code != 3 {
+		t.Errorf("exit code = %d, want 3 (ErrAgentNotFound)", code)
+	}
+	if !strings.Contains(stderr, "agent not found") {
+		t.Errorf("stderr should report the missing agent, got:\n%s", stderr)
+	}
+}
+
+func TestDiscoverProtocolFilters(t *testing.T) {
+	startZone(t, "zone_full")
+
+	stdout, _, code := runCLI("discover", "example.com", "--protocol", "a2a")
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(stdout, "billing.example.com") || strings.Contains(stdout, "chat.example.com") {
+		t.Errorf("stdout should list only the a2a agent, got:\n%s", stdout)
+	}
+}
+
+func TestDiscoverRequireDNSSECWithoutAD(t *testing.T) {
+	startZone(t, "zone_full")
+
+	_, stderr, code := runCLI("discover", "example.com", "--require-dnssec")
+
+	if code != 4 {
+		t.Errorf("exit code = %d, want 4 (ErrDNSSECRequired)", code)
+	}
+	if !strings.Contains(stderr, "DNSSEC") {
+		t.Errorf("stderr should mention DNSSEC, got:\n%s", stderr)
+	}
+}
+
+func TestDiscoverRequireDNSSECWithAD(t *testing.T) {
+	startZone(t, "zone_full", resolvertest.WithAD())
+
+	stdout, stderr, code := runCLI("discover", "example.com", "--require-dnssec")
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "[dnssec:ok]") || strings.Contains(stdout, "unvalidated") {
+		t.Errorf("stdout should mark every agent dnssec:ok, got:\n%s", stdout)
+	}
+}
+
+func TestDiscoverInvalidTimeoutFails(t *testing.T) {
+	startZone(t, "zone_full")
+	t.Setenv("DNSAID_TIMEOUT", "not-a-duration")
+
+	_, stderr, code := runCLI("discover", "example.com")
+
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "DNSAID_TIMEOUT") {
+		t.Errorf("stderr should name DNSAID_TIMEOUT, got:\n%s", stderr)
+	}
+}
+
+func TestDiscoverValidTimeoutSucceeds(t *testing.T) {
+	startZone(t, "zone_full")
+	t.Setenv("DNSAID_TIMEOUT", "2s")
+
+	_, stderr, code := runCLI("discover", "example.com")
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+}
+
+func TestUnknownFlagFailsWithUsage(t *testing.T) {
+	_, stderr, code := runCLI("discover", "example.com", "--no-such-flag")
+
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "Usage:") {
+		t.Errorf("stderr should contain usage, got:\n%s", stderr)
 	}
 }
 
