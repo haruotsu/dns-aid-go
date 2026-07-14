@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.1](https://github.com/haruotsu/dns-aid-go/compare/v0.1.0...v0.1.1) - 2026-07-14
+
+- Publish a multi-arch container image to ghcr.io on release by @haruotsu in https://github.com/haruotsu/dns-aid-go/pull/13
+
 ## [v0.1.0](https://github.com/haruotsu/dns-aid-go/commits/v0.1.0) - 2026-07-14
 
 - Set up tagpr release CI by @haruotsu in https://github.com/haruotsu/dns-aid-go/pull/1
