@@ -36,6 +36,14 @@ var (
 // (R-DISC-1).
 const indexLabel = "_index._agents."
 
+// maxIndexEntries bounds how many index entries one Discover call resolves.
+// Each entry costs two queries (SVCB + capability TXT), so an unbounded
+// index in a hostile or broken zone (a TXT RRset can reach ~64KB over TCP)
+// would amplify one lookup into tens of thousands of queries. 256 agents
+// per domain is generous versus any realistic deployment; the excess is
+// skipped with one error recorded, not a failure (R-DISC-5).
+const maxIndexEntries = 256
+
 // EndpointSource values report how an agent's endpoint was resolved
 // (R-DISC-7).
 const (
@@ -120,6 +128,12 @@ func Discover(ctx context.Context, r resolver.Resolver, domain string, opts Opti
 	}
 
 	res := Result{Index: entries}
+	if len(entries) > maxIndexEntries {
+		res.Errors = append(res.Errors, fmt.Errorf(
+			"index at %s%s lists %d agents, only the first %d processed",
+			indexLabel, domain, len(entries), maxIndexEntries))
+		entries = entries[:maxIndexEntries]
+	}
 	for _, e := range entries {
 		if !matchesFilters(e, opts) {
 			continue
@@ -223,6 +237,15 @@ func queryAgent(ctx context.Context, r resolver.Resolver, e record.IndexEntry, f
 			rec.Port = v.Port
 		}
 	}
+	// ALPN values come straight from DNS and override the agent's
+	// Protocol; a control character here could inject terminal escapes
+	// into CLI output, and an empty or non-printable value makes the
+	// endpoint identity suspect, so the agent is rejected.
+	for _, alpn := range rec.ALPN {
+		if !isVisibleASCII(alpn) {
+			return AgentRecord{}, fmt.Errorf("agent %s: SVCB alpn value %q is not printable ASCII", fqdn, alpn)
+		}
+	}
 	// Protocol is derived from the first ALPN (OSS-03 §3.1); the index
 	// protocol is only a fallback when the record has no ALPN.
 	if len(rec.ALPN) > 0 {
@@ -274,18 +297,61 @@ func fillCapabilities(ctx context.Context, r resolver.Resolver, rec *AgentRecord
 	if opts.RequireDNSSEC && !resp.AD {
 		return fmt.Errorf("%w: capability TXT %s", ErrDNSSECRequired, rec.FQDN)
 	}
+	// A capabilities or version value containing non-printable characters
+	// is ignored (treated as not present): these strings flow into CLI
+	// output, so control characters risk terminal escape injection.
+	tainted := false
 	for _, txt := range resp.Records {
 		for _, s := range txt {
 			if v, ok := strings.CutPrefix(s, capabilitiesKey); ok && rec.Capabilities == nil {
-				rec.Capabilities = splitCapabilities(v)
-				rec.CapabilitySource = CapabilitySourceTXTFallback
+				if caps := splitCapabilities(v); capabilitiesVisibleASCII(caps) {
+					rec.Capabilities = caps
+					rec.CapabilitySource = CapabilitySourceTXTFallback
+				} else {
+					tainted = true
+				}
 			}
-			if v, ok := strings.CutPrefix(s, versionKey); ok && rec.Version == "" {
-				rec.Version = v
+			if v, ok := strings.CutPrefix(s, versionKey); ok && rec.Version == "" && v != "" {
+				if isVisibleASCII(v) {
+					rec.Version = v
+				} else {
+					tainted = true
+				}
 			}
 		}
 	}
+	if tainted {
+		return fmt.Errorf("capability TXT %s: value with non-printable characters ignored", rec.FQDN)
+	}
 	return nil
+}
+
+// isVisibleASCII reports whether s is non-empty and every byte is visible
+// ASCII (0x21..0x7E). DNS-sourced strings destined for CLI output (ALPN,
+// capability tokens, version) are restricted to this set to prevent terminal
+// escape injection. Capability and version tokens are whitespace-trimmed
+// before this check, so no spaces are expected inside a token.
+func isVisibleASCII(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x21 || s[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+// capabilitiesVisibleASCII reports whether every capability token is visible
+// ASCII (see isVisibleASCII).
+func capabilitiesVisibleASCII(caps []string) bool {
+	for _, c := range caps {
+		if !isVisibleASCII(c) {
+			return false
+		}
+	}
+	return true
 }
 
 // splitCapabilities splits a "capabilities=" value on commas, trimming

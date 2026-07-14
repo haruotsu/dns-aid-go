@@ -12,6 +12,7 @@ import (
 
 	"github.com/haruotsu/dns-aid-go/internal/discover"
 	"github.com/haruotsu/dns-aid-go/internal/fixture"
+	"github.com/haruotsu/dns-aid-go/internal/record"
 	"github.com/haruotsu/dns-aid-go/internal/resolver"
 	"github.com/haruotsu/dns-aid-go/internal/resolver/resolvertest"
 )
@@ -675,6 +676,59 @@ func (r stubResolver) QuerySVCB(_ context.Context, fqdn string) (resolver.SVCBRe
 	return resolver.SVCBResponse{}, fmt.Errorf("stub %s: %w", fqdn, resolver.ErrNotFound)
 }
 
+// wildcardSVCBResolver answers every SVCB query with a minimal ServiceMode
+// record, so a test can list hundreds of agents in the index without spelling
+// out a zone. TXT lookups fall through to the embedded stubResolver.
+type wildcardSVCBResolver struct {
+	stubResolver
+}
+
+func (r wildcardSVCBResolver) QuerySVCB(_ context.Context, fqdn string) (resolver.SVCBResponse, error) {
+	return resolver.SVCBResponse{Records: []*dns.SVCB{{
+		Priority: 1,
+		Target:   fqdn + ".",
+		Value:    []dns.SVCBKeyValue{&dns.SVCBAlpn{Alpn: []string{"mcp"}}},
+	}}}, nil
+}
+
+func TestDiscoverBoundsIndexEntryCount(t *testing.T) {
+	// A hostile or broken zone can pack thousands of entries into one index
+	// TXT record; each entry costs two queries, so the count must be
+	// bounded to prevent query amplification.
+	const total = 300
+	entries := make([]record.IndexEntry, total)
+	for i := range entries {
+		entries[i] = record.IndexEntry{Name: fmt.Sprintf("a%03d", i), Protocol: "mcp"}
+	}
+	chunks, err := record.FormatIndexTXT(entries)
+	if err != nil {
+		t.Fatalf("FormatIndexTXT: %v", err)
+	}
+	r := wildcardSVCBResolver{stubResolver{
+		txt: map[string]resolver.TXTResponse{
+			"_index._agents.example.com": {Records: [][]string{chunks}},
+		},
+	}}
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	if len(res.Agents) != 256 {
+		t.Errorf("len(Agents) = %d, want 256", len(res.Agents))
+	}
+	// The excess entries are skipped with a single recorded error, not a
+	// failure of the whole call (partial success, R-DISC-5).
+	if len(res.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1: %v", len(res.Errors), res.Errors)
+	}
+	msg := res.Errors[0].Error()
+	if !strings.Contains(msg, "300") || !strings.Contains(msg, "256") {
+		t.Errorf("Errors[0] = %v, want mention of 300 listed and 256 processed", res.Errors[0])
+	}
+}
+
 func TestDiscoverALPNDoesNotAliasSVCBRecord(t *testing.T) {
 	// The wire client decodes a fresh record per response, so aliasing of
 	// the record's internal slice is only observable with a stub resolver
@@ -704,6 +758,124 @@ func TestDiscoverALPNDoesNotAliasSVCBRecord(t *testing.T) {
 	alpn[0] = "mutated"
 	if !slices.Equal(chat.ALPN, []string{"mcp"}) {
 		t.Errorf("chat.ALPN = %v after mutating the SVCB record's slice, want [mcp]", chat.ALPN)
+	}
+}
+
+func TestDiscoverInvalidSVCBParamsDropsAgent(t *testing.T) {
+	// A duplicate private-use SvcParamKey is malformed (RFC 9460 §2.2):
+	// ParseSVCBParams rejects it, so the agent is dropped with the error
+	// recorded (partial success, R-DISC-5). The zone-file parser rejects
+	// duplicates up front, hence the stub resolver.
+	r := stubResolver{
+		svcb: map[string]resolver.SVCBResponse{
+			"chat.example.com": {Records: []*dns.SVCB{{
+				Priority: 1,
+				Target:   "chat.example.com.",
+				Value: []dns.SVCBKeyValue{
+					&dns.SVCBLocal{KeyCode: record.KeyCap, Data: []byte("https://a.example.com/cap.json")},
+					&dns.SVCBLocal{KeyCode: record.KeyCap, Data: []byte("https://b.example.com/cap.json")},
+				},
+			}}},
+		},
+		txt: map[string]resolver.TXTResponse{
+			"_index._agents.example.com": {Records: [][]string{{"agents=chat:mcp"}}},
+		},
+	}
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	if len(res.Agents) != 0 {
+		t.Errorf("len(Agents) = %d, want 0", len(res.Agents))
+	}
+	if len(res.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1: %v", len(res.Errors), res.Errors)
+	}
+	// The error must name the failing agent so the CLI warning (OSS-03
+	// §6.1) can point at it.
+	if !strings.Contains(res.Errors[0].Error(), "chat.example.com") {
+		t.Errorf("Errors[0] = %v, want mention of chat.example.com", res.Errors[0])
+	}
+}
+
+func TestDiscoverRejectsNonPrintableALPN(t *testing.T) {
+	// An ALPN value comes straight from DNS and overrides the agent's
+	// Protocol; a control character in it could inject terminal escapes
+	// into CLI output, so the agent must be rejected. The zone-file parser
+	// does not round-trip control characters, hence the stub resolver.
+	r := stubResolver{
+		svcb: map[string]resolver.SVCBResponse{
+			"chat.example.com": {Records: []*dns.SVCB{{
+				Priority: 1,
+				Target:   "chat.example.com.",
+				Value:    []dns.SVCBKeyValue{&dns.SVCBAlpn{Alpn: []string{"mcp\x1b[31m"}}},
+			}}},
+		},
+		txt: map[string]resolver.TXTResponse{
+			"_index._agents.example.com": {Records: [][]string{{"agents=chat:mcp"}}},
+		},
+	}
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	if len(res.Agents) != 0 {
+		t.Errorf("len(Agents) = %d, want 0", len(res.Agents))
+	}
+	if len(res.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1: %v", len(res.Errors), res.Errors)
+	}
+	// The error must name the failing agent so the CLI warning (OSS-03
+	// §6.1) can point at it.
+	if !strings.Contains(res.Errors[0].Error(), "chat.example.com") {
+		t.Errorf("Errors[0] = %v, want mention of chat.example.com", res.Errors[0])
+	}
+}
+
+func TestDiscoverIgnoresNonPrintableCapabilityTXTValues(t *testing.T) {
+	// Capabilities and version parsed from TXT flow into CLI output; a
+	// value containing control characters is ignored (treated as not
+	// present) with one error recorded per lookup.
+	r := stubResolver{
+		svcb: map[string]resolver.SVCBResponse{
+			"chat.example.com": {Records: []*dns.SVCB{{
+				Priority: 1,
+				Target:   "chat.example.com.",
+				Value:    []dns.SVCBKeyValue{&dns.SVCBAlpn{Alpn: []string{"mcp"}}},
+			}}},
+		},
+		txt: map[string]resolver.TXTResponse{
+			"_index._agents.example.com": {Records: [][]string{{"agents=chat:mcp"}}},
+			"chat.example.com":           {Records: [][]string{{"capabilities=ch\x07at", "version=1.0\x1b0"}}},
+		},
+	}
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	// The agent itself is fine: only the tainted TXT data is dropped
+	// (partial success, R-DISC-5).
+	chat := agentByName(t, res.Agents, "chat")
+	if len(chat.Capabilities) != 0 {
+		t.Errorf("chat.Capabilities = %v, want empty", chat.Capabilities)
+	}
+	if chat.CapabilitySource != discover.CapabilitySourceNone {
+		t.Errorf("chat.CapabilitySource = %q, want %q", chat.CapabilitySource, discover.CapabilitySourceNone)
+	}
+	if chat.Version != "" {
+		t.Errorf("chat.Version = %q, want empty", chat.Version)
+	}
+	if len(res.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1: %v", len(res.Errors), res.Errors)
+	}
+	if !strings.Contains(res.Errors[0].Error(), "chat.example.com") {
+		t.Errorf("Errors[0] = %v, want mention of chat.example.com", res.Errors[0])
 	}
 }
 
