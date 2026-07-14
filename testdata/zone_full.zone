@@ -1,0 +1,20 @@
+; zone_full (OSS-03 §7.1): a complete deployment with index + SVCB + TXT
+; capability fallback + cap document. Exercises the happy-path discover and
+; the capability source priority (R-DISC-4): chat resolves capabilities from
+; its cap URI, billing and support fall back to TXT.
+;
+; chat's key65401 (cap-sha256) is the raw base64url SHA-256 of
+; testdata/capdoc_chat.json; keep the two in sync.
+$ORIGIN example.com.
+$TTL 300
+
+_index._agents TXT "agents=chat:mcp,billing:a2a,support:https"
+
+chat    SVCB 1 chat.example.com. alpn="mcp" port=443 key65400="https://chat.example.com/.well-known/agent-cap.json" key65401="U0_t8vmbVaTHEXJ3PlnaJNSNvNnfhwOcTZ3WUfJOkbg"
+chat    TXT  "capabilities=chat,assistant" "version=1.0.0"
+
+billing SVCB 1 billing.example.com. alpn="a2a" port=443
+billing TXT  "capabilities=billing,invoicing" "version=2.1.0"
+
+support SVCB 1 support.example.com. alpn="h2" port=8443
+support TXT  "capabilities=support" "version=0.9.0"
