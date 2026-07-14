@@ -22,6 +22,8 @@ jobs:
       # tagpr reads/writes merged PRs and their labels (tagpr:minor/major,
       # changelog) through the Issues API, which requires the issues scope.
       issues: write
+      # goreleaser pushes the container image to ghcr.io.
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,6 +44,12 @@ jobs:
           # integrity-checked, so a poisoned cache could leak into published
           # artifacts (CWE-349).
           cache: false
+      - uses: docker/login-action@v3
+        if: steps.tagpr.outputs.tag != ''
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: goreleaser/goreleaser-action@v6
         if: steps.tagpr.outputs.tag != ''
         with:

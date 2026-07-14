@@ -26,6 +26,14 @@ Download the binary for your platform from the
 go install github.com/haruotsu/dns-aid-go/cmd/dnsaid@latest
 ```
 
+### Container image
+
+Multi-arch (amd64/arm64) images are published to GitHub Container Registry:
+
+```sh
+docker run --rm ghcr.io/haruotsu/dns-aid-go:latest discover example.com
+```
+
 ### Library
 
 ```sh

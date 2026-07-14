@@ -3,7 +3,8 @@ version: 2
 project_name: dnsaid
 
 builds:
-  - main: ./cmd/dnsaid
+  - id: dnsaid
+    main: ./cmd/dnsaid
     binary: dnsaid
     # The release version is compiled in from internal/version/version.go
     # (rewritten by tagpr before tagging), so no ldflags injection is needed.
@@ -27,6 +28,34 @@ archives:
       - goos: windows
         formats:
           - zip
+
+# Container images are built with ko (no Dockerfile, no Docker daemon) and
+# pushed to GitHub Container Registry alongside the release.
+kos:
+  - repositories:
+      - ghcr.io/haruotsu/dns-aid-go
+    # main, env and flags are inherited from the referenced build so the
+    # binary and the image cannot drift apart.
+    build: dnsaid
+    # Pin the runtime base explicitly instead of relying on ko's default, so
+    # a ko upgrade cannot swap it unreviewed (distroless, static, nonroot).
+    base_image: cgr.dev/chainguard/static
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    tags:
+      - "{{ .Tag }}"
+      - latest
+    # bare keeps the image name exactly the repository above instead of
+    # appending the import path.
+    bare: true
+    creation_time: "{{ .CommitTimestamp }}"
+    ko_data_creation_time: "{{ .CommitTimestamp }}"
+    labels:
+      org.opencontainers.image.source: https://github.com/haruotsu/dns-aid-go
+      org.opencontainers.image.description: DNS-based AI agent discovery (DNS-AID)
+      org.opencontainers.image.licenses: Apache-2.0
+      org.opencontainers.image.version: "{{ .Tag }}"
 
 checksum:
   name_template: checksums.txt
