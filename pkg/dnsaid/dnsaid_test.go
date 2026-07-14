@@ -3,6 +3,7 @@ package dnsaid_test
 import (
 	"context"
 	"errors"
+	"net"
 	"slices"
 	"testing"
 	"time"
@@ -202,10 +203,21 @@ func TestDiscoverPartialSuccess(t *testing.T) {
 }
 
 func TestDiscoverUnreachableResolver(t *testing.T) {
-	// A reserved-for-documentation address (RFC 5737) that nothing answers
-	// on; the short timeout keeps the failure fast.
-	_, err := dnsaid.Discover(context.Background(), "example.com",
-		dnsaid.Options{Resolver: "192.0.2.1:53", Timeout: 50 * time.Millisecond})
+	// Reserve a loopback UDP port and release it immediately: nothing
+	// listens there afterwards, so the query fails fast (ICMP port
+	// unreachable) without any packet leaving the host (N-7). The timeout
+	// only bounds the failure in case the ICMP error is not delivered.
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve loopback port: %v", err)
+	}
+	addr := pc.LocalAddr().String()
+	if err := pc.Close(); err != nil {
+		t.Fatalf("release loopback port: %v", err)
+	}
+
+	_, err = dnsaid.Discover(context.Background(), "example.com",
+		dnsaid.Options{Resolver: addr, Timeout: time.Second})
 	if err == nil {
 		t.Fatal("Discover with unreachable resolver: err = nil, want error")
 	}

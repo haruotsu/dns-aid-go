@@ -56,6 +56,45 @@ func TestPublicAPIDoesNotLeakInternalTypes(t *testing.T) {
 	}
 }
 
+// TestExampleFilesDoNotImportInternal parses every test file that declares
+// an Example function and rejects imports of internal packages. Examples are
+// rendered on godoc/pkg.go.dev as copy-paste templates for consumers outside
+// this module, who cannot import internal packages.
+func TestExampleFilesDoNotImportInternal(t *testing.T) {
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package directory: %v", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		hasExample := false
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if ok && fn.Recv == nil && strings.HasPrefix(fn.Name.Name, "Example") {
+				hasExample = true
+				break
+			}
+		}
+		if !hasExample {
+			continue
+		}
+		for _, imp := range f.Imports {
+			path := strings.Trim(imp.Path.Value, `"`)
+			if strings.Contains(path, "/internal/") || strings.HasSuffix(path, "/internal") {
+				t.Errorf("%s declares an Example but imports internal package %s", name, path)
+			}
+		}
+	}
+}
+
 func objKind(obj types.Object) string {
 	switch obj.(type) {
 	case *types.Func:
@@ -74,7 +113,13 @@ func objKind(obj types.Object) string {
 // found whose defining package path contains "/internal/", or "" when there
 // is none. seen breaks cycles (e.g. recursive struct types).
 func findInternalType(t types.Type, seen map[types.Type]bool) string {
-	if t == nil || seen[t] {
+	if t == nil {
+		return ""
+	}
+	// Resolve alias declarations (type A = B); with gotypesalias enabled
+	// they are distinct *types.Alias nodes wrapping the actual type.
+	t = types.Unalias(t)
+	if seen[t] {
 		return ""
 	}
 	seen[t] = true
@@ -83,6 +128,23 @@ func findInternalType(t types.Type, seen map[types.Type]bool) string {
 	case *types.Named:
 		if p := t.Obj().Pkg(); p != nil && strings.Contains(p.Path(), "/internal/") {
 			return t.String()
+		}
+		// Type arguments of generic instantiations (e.g. box[internalT])
+		// need not appear in the underlying type or method set.
+		for arg := range t.TypeArgs().Types() {
+			if leaked := findInternalType(arg, seen); leaked != "" {
+				return leaked
+			}
+		}
+		// Exported methods are part of the public surface even when the
+		// underlying type does not mention their parameter/result types.
+		for m := range t.Methods() {
+			if !m.Exported() {
+				continue
+			}
+			if leaked := findInternalType(m.Signature(), seen); leaked != "" {
+				return leaked
+			}
 		}
 		return findInternalType(t.Underlying(), seen)
 	case *types.Pointer:
