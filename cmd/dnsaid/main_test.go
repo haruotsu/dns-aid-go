@@ -1,25 +1,8 @@
 package main
 
-// CLI integration tests (PR-8, R-CLI-1/3): each test runs the command
-// in-process against an in-process DNS server serving a testdata zone
-// fixture (N-7) and compares output against golden files.
-//
-// Test list:
-// - [x] discover with no arguments fails with usage (exit 1)
-// - [x] discover zone_full prints the human summary (golden, exit 0)
-// - [x] discover zone_full --json prints agents[]+errors[] (golden, exit 0)
-// - [x] discover zone_partial warns on stderr per failed agent, exit 0
-// - [x] discover zone_partial --json records errors[] (golden)
-// - [x] discover zone_index_only finds 0 agents, exit 1
-// - [x] discover against a zone without an index exits 2 (ErrIndexNotFound)
-// - [x] discover --name picks a single agent
-// - [x] discover --name of an unknown agent exits 3 (ErrAgentNotFound)
-// - [x] discover --protocol filters the index entries
-// - [x] discover --require-dnssec without AD exits 4 (ErrDNSSECRequired)
-// - [x] discover --require-dnssec with AD succeeds and shows dnssec:ok
-// - [x] invalid DNSAID_TIMEOUT fails with exit 1
-// - [x] valid DNSAID_TIMEOUT is accepted
-// - [x] unknown flag fails with usage (exit 1)
+// CLI integration tests (R-CLI-1/3): each test runs the command in-process
+// against an in-process DNS server serving a testdata zone fixture (N-7) and
+// compares output against golden files (regenerate with -update).
 
 import (
 	"bytes"
