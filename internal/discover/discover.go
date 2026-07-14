@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/miekg/dns"
@@ -215,7 +216,9 @@ func queryAgent(ctx context.Context, r resolver.Resolver, e record.IndexEntry, f
 	for _, kv := range svcb.Value {
 		switch v := kv.(type) {
 		case *dns.SVCBAlpn:
-			rec.ALPN = v.Alpn
+			// Copy so the returned record does not alias the DNS
+			// record's internal slice.
+			rec.ALPN = slices.Clone(v.Alpn)
 		case *dns.SVCBPort:
 			rec.Port = v.Port
 		}

@@ -3,9 +3,12 @@ package discover_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/miekg/dns"
 
 	"github.com/haruotsu/dns-aid-go/internal/discover"
 	"github.com/haruotsu/dns-aid-go/internal/fixture"
@@ -192,6 +195,26 @@ chat           SVCB 1 chat.example.com. alpn="mcp" port=443
 	// The missing capability TXT is not a failure: no error is recorded.
 	if len(res.Errors) != 0 {
 		t.Errorf("len(Errors) = %d, want 0: %v", len(res.Errors), res.Errors)
+	}
+}
+
+func TestDiscoverDefaultPortWithoutPortParam(t *testing.T) {
+	r := newZoneResolver(t, `
+$ORIGIN example.com.
+$TTL 300
+_index._agents TXT "agents=chat:mcp"
+chat           SVCB 1 chat.example.com. alpn="mcp"
+`)
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	chat := agentByName(t, res.Agents, "chat")
+	// Without a port SvcParam the agent defaults to 443 (OSS-03 §3.1).
+	if chat.Port != 443 {
+		t.Errorf("chat.Port = %d, want 443", chat.Port)
 	}
 }
 
@@ -385,6 +408,38 @@ func TestDiscoverFilterByName(t *testing.T) {
 	if len(res.Errors) != 0 {
 		t.Errorf("len(Errors) = %d, want 0: %v", len(res.Errors), res.Errors)
 	}
+}
+
+func TestDiscoverFilterByNameIsCaseInsensitive(t *testing.T) {
+	r := newFixtureResolver(t, "zone_full")
+
+	// DNS name comparison is case-insensitive (RFC 4343): a mixed-case
+	// filter must match the lower-case index entry.
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{Name: "CHAT"})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	if len(res.Agents) != 1 {
+		t.Fatalf("len(Agents) = %d, want 1", len(res.Agents))
+	}
+	agentByName(t, res.Agents, "chat")
+}
+
+func TestDiscoverFilterByProtocolIsCaseInsensitive(t *testing.T) {
+	r := newFixtureResolver(t, "zone_full")
+
+	// The protocol filter is documented as case-insensitive: an upper-case
+	// filter must match the lower-case index protocol.
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{Protocol: "HTTPS"})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	if len(res.Agents) != 1 {
+		t.Fatalf("len(Agents) = %d, want 1", len(res.Agents))
+	}
+	agentByName(t, res.Agents, "support")
 }
 
 func TestDiscoverFilterByNameNotInIndex(t *testing.T) {
@@ -595,6 +650,60 @@ func TestDiscoverCapabilityTXTLookupFailureIsRecorded(t *testing.T) {
 	}
 	if !strings.Contains(res.Errors[0].Error(), "chat.example.com") {
 		t.Errorf("Errors[0] = %v, want mention of chat.example.com", res.Errors[0])
+	}
+}
+
+// stubResolver serves canned responses without going over the wire, so a
+// test can keep a reference to the exact *dns.SVCB handed to Discover.
+// Names without a canned response yield resolver.ErrNotFound.
+type stubResolver struct {
+	svcb map[string]resolver.SVCBResponse
+	txt  map[string]resolver.TXTResponse
+}
+
+func (r stubResolver) LookupTXT(_ context.Context, fqdn string) (resolver.TXTResponse, error) {
+	if resp, ok := r.txt[fqdn]; ok {
+		return resp, nil
+	}
+	return resolver.TXTResponse{}, fmt.Errorf("stub %s: %w", fqdn, resolver.ErrNotFound)
+}
+
+func (r stubResolver) QuerySVCB(_ context.Context, fqdn string) (resolver.SVCBResponse, error) {
+	if resp, ok := r.svcb[fqdn]; ok {
+		return resp, nil
+	}
+	return resolver.SVCBResponse{}, fmt.Errorf("stub %s: %w", fqdn, resolver.ErrNotFound)
+}
+
+func TestDiscoverALPNDoesNotAliasSVCBRecord(t *testing.T) {
+	// The wire client decodes a fresh record per response, so aliasing of
+	// the record's internal slice is only observable with a stub resolver
+	// that keeps a handle on the *dns.SVCB it returned.
+	alpn := []string{"mcp"}
+	r := stubResolver{
+		svcb: map[string]resolver.SVCBResponse{
+			"chat.example.com": {Records: []*dns.SVCB{{
+				Priority: 1,
+				Target:   "chat.example.com.",
+				Value:    []dns.SVCBKeyValue{&dns.SVCBAlpn{Alpn: alpn}},
+			}}},
+		},
+		txt: map[string]resolver.TXTResponse{
+			"_index._agents.example.com": {Records: [][]string{{"agents=chat:mcp"}}},
+		},
+	}
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	chat := agentByName(t, res.Agents, "chat")
+
+	// Mutating the record's slice after Discover must not change the
+	// returned AgentRecord: it must own its ALPN data.
+	alpn[0] = "mutated"
+	if !slices.Equal(chat.ALPN, []string{"mcp"}) {
+		t.Errorf("chat.ALPN = %v after mutating the SVCB record's slice, want [mcp]", chat.ALPN)
 	}
 }
 
