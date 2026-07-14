@@ -879,6 +879,62 @@ func TestDiscoverIgnoresNonPrintableCapabilityTXTValues(t *testing.T) {
 	}
 }
 
+func TestDiscoverSVCBMandatoryWithSupportedKeys(t *testing.T) {
+	// The design doc's wire example (docs/internal/design.md §3.2) marks
+	// alpn and port as mandatory; both are implemented by this client, so
+	// the agent must resolve normally (RFC 9460 §8).
+	r := newZoneResolver(t, `
+$ORIGIN example.com.
+$TTL 300
+_index._agents TXT "agents=chat:mcp"
+chat           SVCB 1 chat.example.com. alpn="mcp" port=443 mandatory="alpn,port"
+`)
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	agentByName(t, res.Agents, "chat")
+	if len(res.Errors) != 0 {
+		t.Errorf("len(Errors) = %d, want 0: %v", len(res.Errors), res.Errors)
+	}
+}
+
+func TestDiscoverSVCBMandatoryUnsupportedKeyDropsAgent(t *testing.T) {
+	// A client MUST ignore an SVCB record whose mandatory parameter lists
+	// a key it does not implement (RFC 9460 §8): this client does not act
+	// on ipv4hint, so the agent is dropped with the error recorded
+	// (partial success, R-DISC-5).
+	r := newZoneResolver(t, `
+$ORIGIN example.com.
+$TTL 300
+_index._agents TXT "agents=chat:mcp"
+chat           SVCB 1 chat.example.com. alpn="mcp" port=443 mandatory="alpn,ipv4hint" ipv4hint="192.0.2.1"
+`)
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	if len(res.Agents) != 0 {
+		t.Errorf("len(Agents) = %d, want 0", len(res.Agents))
+	}
+	if len(res.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1: %v", len(res.Errors), res.Errors)
+	}
+	// The error must name the failing agent and the unsupported key so the
+	// CLI warning (OSS-03 §6.1) can point at them.
+	msg := res.Errors[0].Error()
+	if !strings.Contains(msg, "chat.example.com") {
+		t.Errorf("Errors[0] = %v, want mention of chat.example.com", res.Errors[0])
+	}
+	if !strings.Contains(msg, "ipv4hint") {
+		t.Errorf("Errors[0] = %v, want mention of ipv4hint", res.Errors[0])
+	}
+}
+
 func TestDiscoverAliasModeOnlyIsError(t *testing.T) {
 	r := newZoneResolver(t, `
 $ORIGIN example.com.

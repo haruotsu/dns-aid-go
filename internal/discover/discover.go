@@ -102,7 +102,12 @@ type Result struct {
 // Options filters and hardens a Discover call (R-DISC-6).
 type Options struct {
 	// Protocol keeps only the index entries advertising this protocol.
-	// Empty means no filter. The comparison is case-insensitive.
+	// It matches the protocol named in the domain index entry, not the
+	// ALPN-derived AgentRecord.Protocol, which may differ (e.g. "https"
+	// in the index vs "h2" from the record's ALPN). Alignment with the
+	// reference implementation will be revisited in interop testing
+	// (PR-10, R-CORE-2). Empty means no filter. The comparison is
+	// case-insensitive.
 	Protocol string
 
 	// Name looks up a single agent by its index name. When it is not in
@@ -209,6 +214,9 @@ func queryAgent(ctx context.Context, r resolver.Resolver, e record.IndexEntry, f
 
 	svcb, err := selectSVCB(resp.Records)
 	if err != nil {
+		return AgentRecord{}, fmt.Errorf("agent %s: %w", fqdn, err)
+	}
+	if err := checkMandatory(svcb); err != nil {
 		return AgentRecord{}, fmt.Errorf("agent %s: %w", fqdn, err)
 	}
 
@@ -364,6 +372,36 @@ func splitCapabilities(value string) []string {
 		}
 	}
 	return caps
+}
+
+// checkMandatory enforces the SVCB mandatory parameter (RFC 9460 §8): a
+// client MUST ignore a record whose mandatory SvcParam lists a key it does
+// not implement. This client implements alpn, port, and the draft's
+// private-use keys (record.KeyCap..record.KeySig); any other mandatory key
+// rejects the record.
+func checkMandatory(svcb *dns.SVCB) error {
+	for _, kv := range svcb.Value {
+		m, ok := kv.(*dns.SVCBMandatory)
+		if !ok {
+			continue
+		}
+		for _, key := range m.Code {
+			if !supportedSVCBKey(key) {
+				return fmt.Errorf("SVCB mandatory parameter requires unsupported key %q (RFC 9460 §8)", key.String())
+			}
+		}
+	}
+	return nil
+}
+
+// supportedSVCBKey reports whether this client implements the SvcParamKey
+// for the purposes of the mandatory check (RFC 9460 §8).
+func supportedSVCBKey(key dns.SVCBKey) bool {
+	switch key {
+	case dns.SVCB_ALPN, dns.SVCB_PORT:
+		return true
+	}
+	return key >= record.KeyCap && key <= record.KeySig
 }
 
 // selectSVCB picks the preferred record from an SVCB RRset: the lowest
