@@ -135,6 +135,64 @@ func TestDiscoverCustomSVCBParams(t *testing.T) {
 	}
 }
 
+func TestDiscoverCapabilitiesFromTXTFallback(t *testing.T) {
+	r := newFixtureResolver(t, "zone_full")
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	// chat carries a cap URI, but fetching it is stubbed until PR-11: the
+	// TXT fallback must fill the capabilities for every agent (R-DISC-4).
+	for _, tc := range []struct {
+		name         string
+		capabilities []string
+		version      string
+	}{
+		{"chat", []string{"chat", "assistant"}, "1.0.0"},
+		{"billing", []string{"billing", "invoicing"}, "2.1.0"},
+		{"support", []string{"support"}, "0.9.0"},
+	} {
+		a := agentByName(t, res.Agents, tc.name)
+		if !slices.Equal(a.Capabilities, tc.capabilities) {
+			t.Errorf("%s.Capabilities = %v, want %v", tc.name, a.Capabilities, tc.capabilities)
+		}
+		if a.Version != tc.version {
+			t.Errorf("%s.Version = %q, want %q", tc.name, a.Version, tc.version)
+		}
+		if a.CapabilitySource != discover.CapabilitySourceTXTFallback {
+			t.Errorf("%s.CapabilitySource = %q, want %q", tc.name, a.CapabilitySource, discover.CapabilitySourceTXTFallback)
+		}
+	}
+}
+
+func TestDiscoverNoCapabilityTXT(t *testing.T) {
+	r := newZoneResolver(t, `
+$ORIGIN example.com.
+$TTL 300
+_index._agents TXT "agents=chat:mcp"
+chat           SVCB 1 chat.example.com. alpn="mcp" port=443
+`)
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	chat := agentByName(t, res.Agents, "chat")
+	if len(chat.Capabilities) != 0 {
+		t.Errorf("chat.Capabilities = %v, want empty", chat.Capabilities)
+	}
+	if chat.CapabilitySource != discover.CapabilitySourceNone {
+		t.Errorf("chat.CapabilitySource = %q, want %q", chat.CapabilitySource, discover.CapabilitySourceNone)
+	}
+	// The missing capability TXT is not a failure: no error is recorded.
+	if len(res.Errors) != 0 {
+		t.Errorf("len(Errors) = %d, want 0: %v", len(res.Errors), res.Errors)
+	}
+}
+
 func TestDiscoverTargetNameDotMeansOwner(t *testing.T) {
 	r := newZoneResolver(t, `
 $ORIGIN example.com.

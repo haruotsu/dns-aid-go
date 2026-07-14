@@ -30,6 +30,15 @@ const (
 	EndpointSourceDNSSVCB = "dns_svcb"
 )
 
+// CapabilitySource values report how an agent's capabilities were resolved
+// (R-DISC-7). CapabilitySourceCapURI is produced once cap-document fetching
+// lands (PR-11); until then the TXT fallback covers every agent.
+const (
+	CapabilitySourceCapURI      = "cap_uri"
+	CapabilitySourceTXTFallback = "txt_fallback"
+	CapabilitySourceNone        = "none"
+)
+
 // AgentRecord is the normalized representation of one discovered agent
 // (OSS-03 §3.1).
 type AgentRecord struct {
@@ -91,6 +100,7 @@ func Discover(ctx context.Context, r resolver.Resolver, domain string, opts Opti
 			continue
 		}
 		rec.Domain = domain
+		fillCapabilities(ctx, r, &rec)
 		res.Agents = append(res.Agents, rec)
 	}
 	return res, nil
@@ -173,6 +183,50 @@ func queryAgent(ctx context.Context, r resolver.Resolver, e record.IndexEntry, f
 	rec.Sig = params.Sig
 
 	return rec, nil
+}
+
+// capabilityTXT keys of the simple capability TXT record (OSS-03 §3.2),
+// e.g. "capabilities=chat,assistant" "version=1.0.0".
+const (
+	capabilitiesKey = "capabilities="
+	versionKey      = "version="
+)
+
+// fillCapabilities resolves rec's capabilities (R-DISC-4). Fetching the cap
+// document (rec.CapURI) is stubbed until PR-11, so the priority order
+// degenerates to the TXT fallback: the first "capabilities=" and "version="
+// key found in the agent's TXT records win. A missing TXT record is normal,
+// not an error.
+func fillCapabilities(ctx context.Context, r resolver.Resolver, rec *AgentRecord) {
+	rec.CapabilitySource = CapabilitySourceNone
+
+	resp, err := r.LookupTXT(ctx, rec.FQDN)
+	if err != nil {
+		return
+	}
+	for _, txt := range resp.Records {
+		for _, s := range txt {
+			if v, ok := strings.CutPrefix(s, capabilitiesKey); ok && rec.Capabilities == nil {
+				rec.Capabilities = splitCapabilities(v)
+				rec.CapabilitySource = CapabilitySourceTXTFallback
+			}
+			if v, ok := strings.CutPrefix(s, versionKey); ok && rec.Version == "" {
+				rec.Version = v
+			}
+		}
+	}
+}
+
+// splitCapabilities splits a "capabilities=" value on commas, trimming
+// whitespace and dropping empty items.
+func splitCapabilities(value string) []string {
+	var caps []string
+	for _, c := range strings.Split(value, ",") {
+		if c = strings.TrimSpace(c); c != "" {
+			caps = append(caps, c)
+		}
+	}
+	return caps
 }
 
 // selectSVCB picks the preferred record from an SVCB RRset: the lowest
