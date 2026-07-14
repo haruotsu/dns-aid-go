@@ -40,11 +40,11 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             pip install "dns-aid[cli]"
           else
-            pip install -r interop/requirements.txt
+            pip install -r internal/interop/requirements.txt
           fi
           pip show dns-aid
       - name: Compare discover results with the reference implementation
-        run: go test -tags interop -v ./interop/
+        run: go test -tags interop -v ./internal/interop/
 
   file-issue:
     needs: interop

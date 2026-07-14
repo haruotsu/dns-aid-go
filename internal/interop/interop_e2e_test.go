@@ -29,7 +29,7 @@ const commandTimeout = 60 * time.Second
 // It needs the reference CLI on PATH (or at $INTEROP_REF_CLI):
 //
 //	pip install "dns-aid[cli]"
-//	go test -tags interop ./interop/
+//	go test -tags interop ./internal/interop/
 func TestDiscoverMatchesReferenceImplementation(t *testing.T) {
 	goCLI := buildGoCLI(t)
 	refCLI := referenceCLI(t)

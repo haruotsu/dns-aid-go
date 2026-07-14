@@ -126,8 +126,8 @@ scheduled run repeats the check against the latest reference release to catch
 drift early. To reproduce it locally or in a fork:
 
 ```sh
-pip install -r interop/requirements.txt
-go test -tags interop ./interop/
+pip install -r internal/interop/requirements.txt
+go test -tags interop ./internal/interop/
 ```
 
 ## Status and limitations
