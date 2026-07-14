@@ -118,6 +118,18 @@ used only to confirm interoperable behavior. Because the draft is still evolving
 conformance may change between releases — every draft revision is recorded in the
 release notes. Run `dnsaid version` to see which draft a binary conforms to.
 
+Interoperability with the reference implementation is verified continuously:
+the [interop workflow](.github/workflows/interop.yml) serves the fixture zones
+from an in-process DNS server, runs `dnsaid discover` and the reference CLI
+against them, and requires the normalized JSON results to match. A weekly
+scheduled run repeats the check against the latest reference release to catch
+drift early. To reproduce it locally or in a fork:
+
+```sh
+pip install -r interop/requirements.txt
+go test -tags interop ./interop/
+```
+
 ## Status and limitations
 
 The current release is **read-only**: it only queries DNS and never writes to it.

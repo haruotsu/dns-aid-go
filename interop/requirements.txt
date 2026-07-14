@@ -1,0 +1,4 @@
+# Reference implementation used by the interop CI (see interop_e2e_test.go).
+# Pinned so push/PR runs are reproducible; the weekly scheduled run installs
+# the latest release instead to detect drift early (N-1).
+dns-aid[cli]==0.26.7
