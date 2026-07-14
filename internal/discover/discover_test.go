@@ -2,7 +2,9 @@ package discover_test
 
 import (
 	"context"
+	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/haruotsu/dns-aid-go/internal/discover"
@@ -234,6 +236,97 @@ chat           SVCB 1 primary.example.com. alpn="mcp" port=443
 	// (priority 0) records are not followed (RFC 9460 §2.4.1).
 	if chat.Endpoint != "primary.example.com" {
 		t.Errorf("chat.Endpoint = %q, want %q", chat.Endpoint, "primary.example.com")
+	}
+}
+
+func TestDiscoverIndexOnlyZone(t *testing.T) {
+	r := newFixtureResolver(t, "zone_index_only")
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	// One index entry, zero agents: a name without an SVCB record is not
+	// an agent (R-DISC-3) and is reported as a warning, not a failure.
+	if len(res.Index) != 1 {
+		t.Errorf("len(Index) = %d, want 1", len(res.Index))
+	}
+	if len(res.Agents) != 0 {
+		t.Errorf("len(Agents) = %d, want 0", len(res.Agents))
+	}
+	if len(res.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1: %v", len(res.Errors), res.Errors)
+	}
+	if !errors.Is(res.Errors[0], resolver.ErrNotFound) {
+		t.Errorf("Errors[0] = %v, want resolver.ErrNotFound", res.Errors[0])
+	}
+}
+
+func TestDiscoverPartialSuccess(t *testing.T) {
+	r := newFixtureResolver(t, "zone_partial")
+
+	res, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	// chat resolves; legacy (TXT only, NODATA) and ghost (NXDOMAIN) fail
+	// without failing the whole call (R-DISC-5).
+	if len(res.Agents) != 1 {
+		t.Fatalf("len(Agents) = %d, want 1", len(res.Agents))
+	}
+	agentByName(t, res.Agents, "chat")
+	if len(res.Errors) != 2 {
+		t.Fatalf("len(Errors) = %d, want 2: %v", len(res.Errors), res.Errors)
+	}
+	for i, e := range res.Errors {
+		if !errors.Is(e, resolver.ErrNotFound) {
+			t.Errorf("Errors[%d] = %v, want resolver.ErrNotFound", i, e)
+		}
+	}
+	// The error message must name the failing agent so the CLI warning
+	// (OSS-03 §6.1) can point at it.
+	if !strings.Contains(res.Errors[0].Error(), "legacy.example.com") {
+		t.Errorf("Errors[0] = %v, want mention of legacy.example.com", res.Errors[0])
+	}
+}
+
+func TestDiscoverIndexMissing(t *testing.T) {
+	r := newZoneResolver(t, `
+$ORIGIN example.com.
+$TTL 300
+unrelated TXT "not an index"
+`)
+
+	_, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if !errors.Is(err, discover.ErrIndexNotFound) {
+		t.Fatalf("Discover error = %v, want ErrIndexNotFound", err)
+	}
+}
+
+func TestDiscoverIndexMalformed(t *testing.T) {
+	r := newZoneResolver(t, `
+$ORIGIN example.com.
+$TTL 300
+_index._agents TXT "agents=chat"
+`)
+
+	_, err := discover.Discover(context.Background(), r, "example.com", discover.Options{})
+	if !errors.Is(err, discover.ErrIndexNotFound) {
+		t.Fatalf("Discover error = %v, want ErrIndexNotFound", err)
+	}
+}
+
+func TestDiscoverTrailingDotDomain(t *testing.T) {
+	r := newFixtureResolver(t, "zone_index_only")
+
+	res, err := discover.Discover(context.Background(), r, "example.com.", discover.Options{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(res.Index) != 1 {
+		t.Errorf("len(Index) = %d, want 1", len(res.Index))
 	}
 }
 
