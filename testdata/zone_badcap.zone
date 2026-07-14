@@ -1,0 +1,10 @@
+; zone_badcap (OSS-03 §7.1): chat's key65401 (cap-sha256) deliberately does
+; NOT match testdata/capdoc_chat.json, so capability fetching must fail with
+; ErrCapMismatch.
+$ORIGIN example.com.
+$TTL 300
+
+_index._agents TXT "agents=chat:mcp"
+
+chat SVCB 1 chat.example.com. alpn="mcp" port=443 key65400="https://chat.example.com/.well-known/agent-cap.json" key65401="kueNCwMpYvR3kqn6lf2YHvY-Hj7wdNU21jBMde3b4p8"
+chat TXT  "capabilities=chat" "version=1.0.0"

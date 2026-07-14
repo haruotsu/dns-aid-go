@@ -1,0 +1,11 @@
+; zone_custom_params (OSS-03 §7.1): every draft private-use SVCB parameter
+; key65400-65405 (cap, cap-sha256, bap, policy, realm, sig) on one record,
+; for round-trip tests (R-CORE-3). key65401 reuses the digest of
+; testdata/capdoc_chat.json so the zone stays internally consistent.
+$ORIGIN example.com.
+$TTL 300
+
+_index._agents TXT "agents=booking:mcp"
+
+booking SVCB 1 mcp.example.com. alpn="mcp" port=443 key65400="https://mcp.example.com/.well-known/agent-cap.json" key65401="U0_t8vmbVaTHEXJ3PlnaJNSNvNnfhwOcTZ3WUfJOkbg" key65402="mcp/1,a2a/1" key65403="https://example.com/agent-policy" key65404="production" key65405="c2lnLXBsYWNlaG9sZGVy"
+booking TXT  "capabilities=booking,scheduling" "version=3.0.0"

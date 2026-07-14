@@ -1,0 +1,13 @@
+; zone_partial (OSS-03 §7.1): only some indexed agents have SVCB records.
+; chat is complete, legacy has TXT but no SVCB (NODATA), ghost has no
+; records at all (NXDOMAIN). discover succeeds partially and records the
+; failures in errors[] (R-DISC-5).
+$ORIGIN example.com.
+$TTL 300
+
+_index._agents TXT "agents=chat:mcp,legacy:a2a,ghost:https"
+
+chat   SVCB 1 chat.example.com. alpn="mcp" port=443
+chat   TXT  "capabilities=chat" "version=1.0.0"
+
+legacy TXT  "capabilities=legacy-billing" "version=0.1.0"

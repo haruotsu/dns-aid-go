@@ -1,0 +1,7 @@
+; zone_index_only (OSS-03 §7.1): the index exists but no agent records do.
+; discover must report one index entry and zero agents (R-DISC-3); the
+; diagnostic mode marks the entry Incomplete instead (R-DIAG-1).
+$ORIGIN example.com.
+$TTL 300
+
+_index._agents TXT "agents=chat:mcp"
