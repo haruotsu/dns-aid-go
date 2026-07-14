@@ -123,7 +123,7 @@ func TestDiscoverCustomSVCBParams(t *testing.T) {
 	want := discover.AgentRecord{
 		CapURI:    "https://mcp.example.com/.well-known/agent-cap.json",
 		CapSHA256: "U0_t8vmbVaTHEXJ3PlnaJNSNvNnfhwOcTZ3WUfJOkbg",
-		BAP:       "mcp/1,a2a/1",
+		BAP:       "mcp=1.0",
 		Policy:    "https://example.com/agent-policy",
 		Realm:     "production",
 		Sig:       "c2lnLXBsYWNlaG9sZGVy",
