@@ -1,0 +1,78 @@
+{
+  "domain": "example.com",
+  "index": [
+    {
+      "name": "chat",
+      "protocol": "mcp"
+    },
+    {
+      "name": "billing",
+      "protocol": "a2a"
+    },
+    {
+      "name": "support",
+      "protocol": "https"
+    }
+  ],
+  "agents": [
+    {
+      "name": "chat",
+      "domain": "example.com",
+      "fqdn": "chat.example.com",
+      "protocol": "mcp",
+      "endpoint": "chat.example.com",
+      "port": 443,
+      "alpn": [
+        "mcp"
+      ],
+      "capabilities": [
+        "chat",
+        "assistant"
+      ],
+      "version": "1.0.0",
+      "cap_uri": "https://chat.example.com/.well-known/agent-cap.json",
+      "cap_sha256": "U0_t8vmbVaTHEXJ3PlnaJNSNvNnfhwOcTZ3WUfJOkbg",
+      "endpoint_source": "dns_svcb",
+      "capability_source": "txt_fallback",
+      "dnssec_validated": false
+    },
+    {
+      "name": "billing",
+      "domain": "example.com",
+      "fqdn": "billing.example.com",
+      "protocol": "a2a",
+      "endpoint": "billing.example.com",
+      "port": 443,
+      "alpn": [
+        "a2a"
+      ],
+      "capabilities": [
+        "billing",
+        "invoicing"
+      ],
+      "version": "2.1.0",
+      "endpoint_source": "dns_svcb",
+      "capability_source": "txt_fallback",
+      "dnssec_validated": false
+    },
+    {
+      "name": "support",
+      "domain": "example.com",
+      "fqdn": "support.example.com",
+      "protocol": "h2",
+      "endpoint": "support.example.com",
+      "port": 8443,
+      "alpn": [
+        "h2"
+      ],
+      "capabilities": [
+        "support"
+      ],
+      "version": "0.9.0",
+      "endpoint_source": "dns_svcb",
+      "capability_source": "txt_fallback",
+      "dnssec_validated": false
+    }
+  ],
+  "errors": []
+}

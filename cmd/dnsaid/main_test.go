@@ -5,7 +5,7 @@ package main
 // fixture (N-7) and compares output against golden files.
 //
 // Test list:
-// - [ ] discover with no arguments fails with usage (exit 1)
+// - [x] discover with no arguments fails with usage (exit 1)
 // - [ ] discover zone_full prints the human summary (golden, exit 0)
 // - [ ] discover zone_full --json prints agents[]+errors[] (golden, exit 0)
 // - [ ] discover zone_partial warns on stderr per failed agent, exit 0
@@ -73,6 +73,34 @@ func checkGolden(t *testing.T, name, got string) {
 	if got != string(want) {
 		t.Errorf("output differs from %s:\n--- want\n%s\n--- got\n%s", path, want, got)
 	}
+}
+
+func TestDiscoverZoneFullHuman(t *testing.T) {
+	startZone(t, "zone_full")
+
+	stdout, stderr, code := runCLI("discover", "example.com")
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+	checkGolden(t, "discover_full_human.golden", stdout)
+}
+
+func TestDiscoverZoneFullJSON(t *testing.T) {
+	startZone(t, "zone_full")
+
+	stdout, stderr, code := runCLI("discover", "example.com", "--json")
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+	checkGolden(t, "discover_full_json.golden", stdout)
 }
 
 func TestDiscoverNoArgsFailsWithUsage(t *testing.T) {
